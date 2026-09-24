@@ -1,14 +1,67 @@
 
+import sys
+
+# Force unbuffered stdout/stderr so these startup markers (and any
+# exception traceback) actually reach CloudWatch instead of sitting in a
+# buffer that never gets flushed if the process is killed for taking too
+# long to initialize.
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
+
 import os
 import logging
+import time
+
+START_TIME = time.perf_counter()
+
+print("=== ELY STARTING ===", flush=True)
 
 from bedrock_agentcore import BedrockAgentCoreApp
+
+print(
+    f"bedrock_agentcore imported: {time.perf_counter() - START_TIME:.2f}s",
+    flush=True,
+)
+
 from bedrock_agentcore.identity.auth import requires_wat
 
+print(
+    f"requires_wat imported: {time.perf_counter() - START_TIME:.2f}s",
+    flush=True,
+)
+
 from strands import Agent
+
+print(
+    f"strands Agent imported: {time.perf_counter() - START_TIME:.2f}s",
+    flush=True,
+)
+
 from strands.models import BedrockModel
+
+print(
+    f"BedrockModel imported: {time.perf_counter() - START_TIME:.2f}s",
+    flush=True,
+)
+
 from strands.tools.mcp.mcp_client import MCPClient
+
+print(
+    f"MCPClient imported: {time.perf_counter() - START_TIME:.2f}s",
+    flush=True,
+)
+
 from mcp.client.streamable_http import streamablehttp_client
+
+print(
+    f"MCP transport imported: {time.perf_counter() - START_TIME:.2f}s",
+    flush=True,
+)
+
+print(
+    f"=== ALL IMPORTS COMPLETE: {time.perf_counter() - START_TIME:.2f}s ===",
+    flush=True,
+)
 
 
 # -----------------------------------------------------------------------------
@@ -84,7 +137,16 @@ def create_agent(mcp_client: MCPClient):
     natural-language request.
     """
 
+    start = time.perf_counter()
+
+    logger.info("Starting Gateway tool discovery")
+
     tools = mcp_client.list_tools_sync()
+
+    logger.info(
+        "Gateway tool discovery completed in %.2fs",
+        time.perf_counter() - start,
+    )
 
     logger.info(
         "Gateway tools discovered: %s",
@@ -93,6 +155,8 @@ def create_agent(mcp_client: MCPClient):
             for tool in tools
         ],
     )
+
+    logger.info("Creating BedrockModel")
 
     model = BedrockModel(
         model_id=BEDROCK_MODEL_ID,
@@ -209,7 +273,16 @@ def invoke(payload, identity_wat: str):
             # Ask Claude to answer the user's question
             # -----------------------------------------------------------------
 
+            start = time.perf_counter()
+
+            logger.info("Calling ELY agent")
+
             result = agent(query)
+
+            logger.info(
+                "ELY agent completed in %.2fs",
+                time.perf_counter() - start,
+            )
 
             # -----------------------------------------------------------------
             # Return natural-language response
@@ -239,4 +312,14 @@ if __name__ == "__main__":
     # Bind on all interfaces: AgentCore Runtime reaches the agent on port 8080.
     # (app.run() only auto-binds 0.0.0.0 inside Docker, which S3 code
     # deployments are not.)
-    app.run(host="0.0.0.0", port=8080)
+    try:
+        print(
+            f"=== STARTING APP: {time.perf_counter() - START_TIME:.2f}s ===",
+            flush=True,
+        )
+        app.run(host="0.0.0.0", port=8080)
+    except Exception:
+        import traceback
+        print("=== APP FAILED TO START ===", flush=True)
+        traceback.print_exc()
+        raise
