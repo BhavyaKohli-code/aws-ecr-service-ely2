@@ -36,23 +36,29 @@ def _make_conversation_manager():
 
 def agent_factory():
     cache = {}
-    def get_or_create_agent(session_id, user_id):
-        """Returns (agent, gateway_auth) for this session/user."""
+    def get_or_create_agent(session_id, user_id, authorization):
+        """Returns the agent for this session/user, with the caller's current token set for the Gateway."""
         _actor_id = user_id
         key = f"{session_id}/{_actor_id}"
-        if key not in cache:
-            gateway_auth = GatewayAuth()
-            agent = Agent(
-                model=load_model(),
-                session_manager=get_memory_session_manager(session_id, _actor_id),
-                conversation_manager=_make_conversation_manager(),
-                system_prompt=DEFAULT_SYSTEM_PROMPT,
-                tools=[get_gateway_mcp_client(gateway_auth)],
-                hooks=[
-                ],
-            )
-            cache[key] = (agent, gateway_auth)
-        return cache[key]
+        if key in cache:
+            agent, gateway_auth = cache[key]
+            gateway_auth.authorization = authorization
+            return agent
+        # The token must be set before Agent() is created: creating it connects to
+        # the Gateway to list tools.
+        gateway_auth = GatewayAuth()
+        gateway_auth.authorization = authorization
+        agent = Agent(
+            model=load_model(),
+            session_manager=get_memory_session_manager(session_id, _actor_id),
+            conversation_manager=_make_conversation_manager(),
+            system_prompt=DEFAULT_SYSTEM_PROMPT,
+            tools=[get_gateway_mcp_client(gateway_auth)],
+            hooks=[
+            ],
+        )
+        cache[key] = (agent, gateway_auth)
+        return agent
     return get_or_create_agent
 get_or_create_agent = agent_factory()
 
@@ -123,12 +129,11 @@ async def invoke(payload, context):
 
     session_id = getattr(context, 'session_id', 'default-session')
     user_id = getattr(context, 'user_id', 'default-user')
-    agent, gateway_auth = get_or_create_agent(session_id, user_id)
-
     # Reuse the caller's own token for the Gateway (both use the same Cognito pool)
-    gateway_auth.authorization = _get_authorization(context)
-    if not gateway_auth.authorization:
+    authorization = _get_authorization(context)
+    if not authorization:
         log.warning("No Authorization header on request; Gateway calls will be unauthenticated")
+    agent = get_or_create_agent(session_id, user_id, authorization)
 
     prompt = _extract_prompt(payload)
 
