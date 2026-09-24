@@ -1,0 +1,59 @@
+{
+  "$schema": "https://schema.agentcore.aws.dev/v1/agentcore.json",
+  "name": "ely",
+  "version": 1,
+  "managedBy": "CDK",
+  "tags": {
+    "agentcore:created-by": "agentcore-cli",
+    "agentcore:project-name": "ely"
+  },
+  "runtimes": [
+    {
+      "name": "ely",
+      "description": "ELY enterprise employee assistant (HR / Sales knowledge via AgentCore Gateway)",
+      "build": "CodeZip",
+      "entrypoint": "main.py",
+      "codeLocation": "app/ely/",
+      "runtimeVersion": "PYTHON_3_14",
+      "networkMode": "PUBLIC",
+      "protocol": "HTTP",
+      "envVars": [
+        {
+          "name": "GATEWAY_URL",
+          "value": "https://gateway-quick-start-5911f1-51wfgctwi8.gateway.bedrock-agentcore.ap-south-1.amazonaws.com/mcp"
+        },
+        {
+          "name": "BEDROCK_MODEL_ID",
+          "value": "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+        }
+      ],
+      "requestHeaderAllowlist": ["Authorization"],
+      "authorizerType": "CUSTOM_JWT",
+      "authorizerConfiguration": {
+        "customJwtAuthorizer": {
+          "discoveryUrl": "https://cognito-idp.ap-south-1.amazonaws.com/ap-south-1_i4q7zoJr3/.well-known/openid-configuration",
+          "allowedClients": ["29v9nta55qtfsbgrupp841900q"]
+        }
+      }
+    }
+  ],
+  "memories": [
+    {
+      "name": "elyMemory",
+      "eventExpiryDuration": 30,
+      "strategies": []
+    }
+  ],
+  "knowledgeBases": [],
+  "credentials": [],
+  "evaluators": [],
+  "onlineEvalConfigs": [],
+  "agentCoreGateways": [],
+  "policyEngines": [],
+  "configBundles": [],
+  "abTests": [],
+  "harnesses": [],
+  "datasets": [],
+  "capacityProviders": [],
+  "payments": []
+}

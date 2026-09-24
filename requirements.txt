@@ -1,3 +1,0 @@
-bedrock-agentcore==1.23.1
-strands-agents==1.57.0
-mcp==1.30.0
