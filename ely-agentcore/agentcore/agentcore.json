@@ -24,7 +24,7 @@
         },
         {
           "name": "BEDROCK_MODEL_ID",
-          "value": "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+          "value": "mistral.ministral-3-8b-instruct"
         }
       ],
       "requestHeaderAllowlist": ["Authorization"],
