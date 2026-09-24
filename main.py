@@ -40,7 +40,7 @@ GATEWAY_URL = os.environ.get(
 
 BEDROCK_MODEL_ID = os.environ.get(
     "BEDROCK_MODEL_ID",
-    "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "mistral.ministral-3-8b-instruct",
 )
 
 
@@ -62,7 +62,6 @@ def create_gateway_transport(identity_wat: str):
     headers = {
         "Authorization": f"Bearer {identity_wat}",
         "X-Amz-Bedrock-AgentCore-Identity-WAT": identity_wat,
-        "MCP-Protocol-Version": "2026-07-28",
     }
 
     logger.info("Connecting to AgentCore Gateway")
@@ -237,4 +236,7 @@ def invoke(payload, identity_wat: str):
 # -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run()
+    # Bind on all interfaces: AgentCore Runtime reaches the agent on port 8080.
+    # (app.run() only auto-binds 0.0.0.0 inside Docker, which S3 code
+    # deployments are not.)
+    app.run(host="0.0.0.0", port=8080)
