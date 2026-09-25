@@ -19,10 +19,6 @@
       "protocol": "HTTP",
       "envVars": [
         {
-          "name": "GATEWAY_URL",
-          "value": "https://gateway-quick-start-5911f1-51wfgctwi8.gateway.bedrock-agentcore.ap-south-1.amazonaws.com/mcp"
-        },
-        {
           "name": "BEDROCK_MODEL_ID",
           "value": "mistral.ministral-3-8b-instruct"
         },
@@ -57,8 +53,50 @@
   "credentials": [],
   "evaluators": [],
   "onlineEvalConfigs": [],
-  "agentCoreGateways": [],
-  "policyEngines": [],
+  "agentCoreGateways": [
+    {
+      "name": "kb-gateway",
+      "description": "ELY knowledge retrieval tools (HR, Sales) with access policies by Cognito group",
+      "authorizerType": "CUSTOM_JWT",
+      "authorizerConfiguration": {
+        "customJwtAuthorizer": {
+          "discoveryUrl": "https://cognito-idp.ap-south-1.amazonaws.com/ap-south-1_i4q7zoJr3/.well-known/openid-configuration",
+          "allowedClients": ["29v9nta55qtfsbgrupp841900q"]
+        }
+      },
+      "enableSemanticSearch": false,
+      "exceptionLevel": "NONE",
+      "policyEngineConfiguration": {
+        "policyEngineName": "elyPolicyEngine",
+        "mode": "LOG_ONLY"
+      },
+      "targets": [
+        {
+          "name": "hr-knowledge-retrieval",
+          "targetType": "lambdaFunctionArn",
+          "lambdaFunctionArn": {
+            "lambdaArn": "arn:aws:lambda:ap-south-1:789270642392:function:new-ely2-poc-bhavya-retrievehr",
+            "toolSchemaFile": "gateway/hr-knowledge-retrieval.tools.json"
+          }
+        },
+        {
+          "name": "sales-knowledge-retrieval",
+          "targetType": "lambdaFunctionArn",
+          "lambdaFunctionArn": {
+            "lambdaArn": "arn:aws:lambda:ap-south-1:789270642392:function:new-ely2-poc-bhavya-retrievesales",
+            "toolSchemaFile": "gateway/sales-knowledge-retrieval.tools.json"
+          }
+        }
+      ]
+    }
+  ],
+  "policyEngines": [
+    {
+      "name": "elyPolicyEngine",
+      "description": "ELY tool access: HR for FULL_TIME only, Sales for FULL_TIME and BUSINESS_PARTNER",
+      "policies": []
+    }
+  ],
   "configBundles": [],
   "abTests": [],
   "harnesses": [],

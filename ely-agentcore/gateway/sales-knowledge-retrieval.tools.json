@@ -1,0 +1,16 @@
+[
+  {
+    "name": "retrieve_sales",
+    "description": "Retrieve relevant information from the Sales knowledge base for sales, products, customer benefits, business insurance, NRI, and related business questions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The question or information to retrieve from the Sales knowledge base."
+        }
+      },
+      "required": ["query"]
+    }
+  }
+]
