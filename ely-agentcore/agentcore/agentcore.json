@@ -23,6 +23,10 @@
           "value": "mistral.ministral-3-8b-instruct"
         },
         {
+          "name": "GATEWAY_URL",
+          "value": "https://gateway-quick-start-5911f1-51wfgctwi8.gateway.bedrock-agentcore.ap-south-1.amazonaws.com/mcp"
+        },
+        {
           "name": "PRESIGNED_URL_EXPIRY_SECONDS",
           "value": "900"
         },
@@ -31,13 +35,19 @@
           "value": "3"
         }
       ],
-      "requestHeaderAllowlist": ["Authorization"],
-      "additionalPolicies": ["policies/documents-read.json"],
+      "requestHeaderAllowlist": [
+        "Authorization"
+      ],
+      "additionalPolicies": [
+        "policies/documents-read.json"
+      ],
       "authorizerType": "CUSTOM_JWT",
       "authorizerConfiguration": {
         "customJwtAuthorizer": {
           "discoveryUrl": "https://cognito-idp.ap-south-1.amazonaws.com/ap-south-1_i4q7zoJr3/.well-known/openid-configuration",
-          "allowedClients": ["29v9nta55qtfsbgrupp841900q"]
+          "allowedClients": [
+            "29v9nta55qtfsbgrupp841900q"
+          ]
         }
       }
     }
@@ -53,48 +63,34 @@
   "credentials": [],
   "evaluators": [],
   "onlineEvalConfigs": [],
-  "agentCoreGateways": [
-    {
-      "name": "kb-gateway",
-      "description": "ELY knowledge retrieval tools (HR, Sales) with access policies by Cognito group",
-      "authorizerType": "CUSTOM_JWT",
-      "authorizerConfiguration": {
-        "customJwtAuthorizer": {
-          "discoveryUrl": "https://cognito-idp.ap-south-1.amazonaws.com/ap-south-1_i4q7zoJr3/.well-known/openid-configuration",
-          "allowedClients": ["29v9nta55qtfsbgrupp841900q"]
-        }
-      },
-      "enableSemanticSearch": false,
-      "exceptionLevel": "NONE",
-      "policyEngineConfiguration": {
-        "policyEngineName": "elyPolicyEngine",
-        "mode": "LOG_ONLY"
-      },
-      "targets": [
-        {
-          "name": "hr-knowledge-retrieval",
-          "targetType": "lambdaFunctionArn",
-          "lambdaFunctionArn": {
-            "lambdaArn": "arn:aws:lambda:ap-south-1:789270642392:function:new-ely2-poc-bhavya-retrievehr",
-            "toolSchemaFile": "gateway/hr-knowledge-retrieval.tools.json"
-          }
-        },
-        {
-          "name": "sales-knowledge-retrieval",
-          "targetType": "lambdaFunctionArn",
-          "lambdaFunctionArn": {
-            "lambdaArn": "arn:aws:lambda:ap-south-1:789270642392:function:new-ely2-poc-bhavya-retrievesales",
-            "toolSchemaFile": "gateway/sales-knowledge-retrieval.tools.json"
-          }
-        }
-      ]
-    }
-  ],
+  "agentCoreGateways": [],
   "policyEngines": [
     {
       "name": "elyPolicyEngine",
-      "description": "ELY tool access: HR for FULL_TIME only, Sales for FULL_TIME and BUSINESS_PARTNER",
-      "policies": []
+      "description": "ELY tool access on the quick-start gateway: HR for FULL_TIME only, Sales for FULL_TIME and BUSINESS_PARTNER",
+      "policies": [
+        {
+          "name": "ely_hr_fulltime_only",
+          "description": "HR knowledge base: FULL_TIME group only",
+          "statement": "permit(\n  principal is AgentCore::OAuthUser,\n  action == AgentCore::Action::\"hr-knowledge-retrieval___retrieve_hr\",\n  resource == AgentCore::Gateway::\"arn:aws:bedrock-agentcore:ap-south-1:789270642392:gateway/gateway-quick-start-5911f1-51wfgctwi8\"\n)\nwhen {\n  principal.hasTag(\"cognito:groups\") &&\n  principal.getTag(\"cognito:groups\") like \"*FULL_TIME*\"\n};",
+          "validationMode": "FAIL_ON_ANY_FINDINGS",
+          "enforcementMode": "ACTIVE"
+        },
+        {
+          "name": "ely_sales_employees_and_partners",
+          "description": "Sales knowledge base: FULL_TIME and BUSINESS_PARTNER groups",
+          "statement": "permit(\n  principal is AgentCore::OAuthUser,\n  action == AgentCore::Action::\"sales-knowledge-retrieval___retrieve_sales\",\n  resource == AgentCore::Gateway::\"arn:aws:bedrock-agentcore:ap-south-1:789270642392:gateway/gateway-quick-start-5911f1-51wfgctwi8\"\n)\nwhen {\n  principal.hasTag(\"cognito:groups\") &&\n  (principal.getTag(\"cognito:groups\") like \"*FULL_TIME*\" ||\n   principal.getTag(\"cognito:groups\") like \"*BUSINESS_PARTNER*\")\n};",
+          "validationMode": "FAIL_ON_ANY_FINDINGS",
+          "enforcementMode": "ACTIVE"
+        },
+        {
+          "name": "ely_forbid_hr_for_partners",
+          "description": "Never allow HR knowledge base for BUSINESS_PARTNER group",
+          "statement": "forbid(\n  principal is AgentCore::OAuthUser,\n  action == AgentCore::Action::\"hr-knowledge-retrieval___retrieve_hr\",\n  resource == AgentCore::Gateway::\"arn:aws:bedrock-agentcore:ap-south-1:789270642392:gateway/gateway-quick-start-5911f1-51wfgctwi8\"\n)\nwhen {\n  principal.hasTag(\"cognito:groups\") &&\n  principal.getTag(\"cognito:groups\") like \"*BUSINESS_PARTNER*\"\n};",
+          "validationMode": "FAIL_ON_ANY_FINDINGS",
+          "enforcementMode": "ACTIVE"
+        }
+      ]
     }
   ],
   "configBundles": [],

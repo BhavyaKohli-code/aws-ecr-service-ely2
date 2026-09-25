@@ -8,12 +8,10 @@ from strands.tools.mcp.mcp_client import MCPClient
 
 logger = logging.getLogger(__name__)
 
-# ELY AgentCore Gateway (HR / Sales knowledge retrieval tools). AGENTCORE_GATEWAY_KB_GATEWAY_URL is
-# set by `agentcore deploy` for the project's kb-gateway, which enforces the access policies.
-GATEWAY_URL = (
-    os.getenv("AGENTCORE_GATEWAY_KB_GATEWAY_URL")
-    or os.getenv("GATEWAY_URL")
-    or "https://gateway-quick-start-5911f1-51wfgctwi8.gateway.bedrock-agentcore.ap-south-1.amazonaws.com/mcp"
+# ELY AgentCore Gateway (HR / Sales knowledge retrieval tools)
+GATEWAY_URL = os.getenv(
+    "GATEWAY_URL",
+    "https://gateway-quick-start-5911f1-51wfgctwi8.gateway.bedrock-agentcore.ap-south-1.amazonaws.com/mcp",
 )
 
 
