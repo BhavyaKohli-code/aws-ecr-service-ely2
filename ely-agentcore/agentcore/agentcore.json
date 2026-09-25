@@ -82,13 +82,6 @@
           "statement": "permit(\n  principal is AgentCore::OAuthUser,\n  action == AgentCore::Action::\"sales-knowledge-retrieval___retrieve_sales\",\n  resource == AgentCore::Gateway::\"arn:aws:bedrock-agentcore:ap-south-1:789270642392:gateway/gateway-quick-start-5911f1-51wfgctwi8\"\n)\nwhen {\n  principal.hasTag(\"cognito:groups\") &&\n  (principal.getTag(\"cognito:groups\") like \"*FULL_TIME*\" ||\n   principal.getTag(\"cognito:groups\") like \"*BUSINESS_PARTNER*\")\n};",
           "validationMode": "FAIL_ON_ANY_FINDINGS",
           "enforcementMode": "ACTIVE"
-        },
-        {
-          "name": "ely_forbid_hr_for_partners",
-          "description": "Never allow HR knowledge base for BUSINESS_PARTNER group",
-          "statement": "forbid(\n  principal is AgentCore::OAuthUser,\n  action == AgentCore::Action::\"hr-knowledge-retrieval___retrieve_hr\",\n  resource == AgentCore::Gateway::\"arn:aws:bedrock-agentcore:ap-south-1:789270642392:gateway/gateway-quick-start-5911f1-51wfgctwi8\"\n)\nwhen {\n  principal.hasTag(\"cognito:groups\") &&\n  principal.getTag(\"cognito:groups\") like \"*BUSINESS_PARTNER*\"\n};",
-          "validationMode": "FAIL_ON_ANY_FINDINGS",
-          "enforcementMode": "ACTIVE"
         }
       ]
     }
