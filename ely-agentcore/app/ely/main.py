@@ -5,6 +5,7 @@ from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from model.load import load_model
 from mcp_client.client import GatewayAuth, get_gateway_mcp_client
 from memory.session import get_memory_session_manager
+from sources.presign import collect_sources, presign_sources
 
 app = BedrockAgentCoreApp()
 log = app.logger
@@ -137,16 +138,26 @@ async def invoke(payload, context):
 
     prompt = _extract_prompt(payload)
 
+    first_new_message = len(agent.messages)
+    answer = ""
 
     async for event in agent.stream_async(
         prompt,
     ):
+        if isinstance(event, dict) and "result" in event:
+            answer = str(event["result"]).strip()
         if not isinstance(event, dict) or "event" not in event:
             continue
         cbs = event["event"].get("contentBlockStart")
         if cbs is not None and not cbs.get("start"):
             continue
         yield event
+
+    # Final structured event: the answer plus the documents it was retrieved from,
+    # each with short-lived pre-signed links.
+    sources = presign_sources(collect_sources(agent.messages[first_new_message:]))
+    log.info("Answer built from %d source document(s)", len(sources))
+    yield {"type": "final", "answer": answer, "sources": sources}
 
 
 if __name__ == "__main__":

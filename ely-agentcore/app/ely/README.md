@@ -13,6 +13,7 @@ a Strands agent and streams its events back to the caller.
 - `model/load.py` — Bedrock model (`BEDROCK_MODEL_ID` env var)
 - `mcp_client/client.py` — MCP client for the ELY AgentCore Gateway (`GATEWAY_URL` env var)
 - `memory/session.py` — AgentCore Memory session manager (`MEMORY_ELYMEMORY_ID`, set by deploy)
+- `sources/presign.py` — collects source documents from retrieval results and pre-signs S3 links
 
 ## Auth flow
 
@@ -27,7 +28,36 @@ a Strands agent and streams its events back to the caller.
 {"prompt": "What is the leave policy?"}
 ```
 
-`{"query": ...}` is also accepted for older callers. The response is a stream of Strands events (SSE).
+`{"query": ...}` is also accepted for older callers.
+
+## Response
+
+A stream of server-sent events. The answer text streams as Strands events
+(`event.contentBlockDelta.delta.text`), then one final structured event arrives:
+
+```json
+{
+  "type": "final",
+  "answer": "Here's an overview of the Leave Policy ...",
+  "sources": [
+    {
+      "title": "Leave and Attendance Policy",
+      "file_name": "Leave and Attendance Policy.docx",
+      "s3_uri": "s3://elydocuments/HRIS/HR Policies/Leave and Attendance Policy.docx",
+      "score": 0.50,
+      "snippet": "Leave and Attendance Policy Version Last reviewed 1st April 2026 ...",
+      "expires_in_seconds": 900,
+      "view_url": "https://elydocuments.s3.ap-south-1.amazonaws.com/...(inline)",
+      "download_url": "https://elydocuments.s3.ap-south-1.amazonaws.com/...(attachment)"
+    }
+  ]
+}
+```
+
+`sources` lists the distinct documents the retrieval tools returned for this question (best chunk per
+document, highest score first, at most `MAX_SOURCES`). The links are S3 pre-signed URLs signed by the runtime's
+execution role (`policies/documents-read.json`) and expire after `PRESIGNED_URL_EXPIRY_SECONDS`. `sources` is
+empty when no tool was called.
 
 ## Environment Variables
 
@@ -35,6 +65,9 @@ a Strands agent and streams its events back to the caller.
 | --- | --- | --- |
 | `GATEWAY_URL` | No | ELY Gateway MCP endpoint (set in `agentcore.json`) |
 | `BEDROCK_MODEL_ID` | No | Bedrock model or inference profile ID (set in `agentcore.json`) |
+| `PRESIGNED_URL_EXPIRY_SECONDS` | No | Lifetime of source document links (default 900) |
+| `MAX_SOURCES` | No | Maximum source documents per answer (default 3) |
+| `DOCUMENTS_BUCKET_REGION` | No | Region of the documents bucket (default `AWS_REGION`) |
 | `LOCAL_DEV` | No | Set to `1` to use `.env.local` instead of AgentCore Identity |
 
 # Developing locally

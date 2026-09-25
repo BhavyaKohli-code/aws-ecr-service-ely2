@@ -25,9 +25,18 @@
         {
           "name": "BEDROCK_MODEL_ID",
           "value": "mistral.ministral-3-8b-instruct"
+        },
+        {
+          "name": "PRESIGNED_URL_EXPIRY_SECONDS",
+          "value": "900"
+        },
+        {
+          "name": "MAX_SOURCES",
+          "value": "3"
         }
       ],
       "requestHeaderAllowlist": ["Authorization"],
+      "additionalPolicies": ["policies/documents-read.json"],
       "authorizerType": "CUSTOM_JWT",
       "authorizerConfiguration": {
         "customJwtAuthorizer": {
