@@ -2,10 +2,15 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "ReadElyDocumentsForPresignedLinks",
+      "Sid": "ReadKnowledgeBaseDocumentsForPresignedLinks",
       "Effect": "Allow",
       "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::elydocuments/*"
+      "Resource": "arn:aws:s3:::*/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "789270642392"
+        }
+      }
     }
   ]
 }
