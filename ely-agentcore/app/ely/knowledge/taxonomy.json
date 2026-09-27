@@ -1,0 +1,102 @@
+{
+  "_about": "Single source of truth for how ELY's knowledge is organised. Used by tools/build_metadata.py (writes S3 .metadata.json files) and by the agent (intent rules and search filters). Edit here only.",
+
+  "categories": {
+    "products":               {"domain": "SALES", "label": "PRODUCT DOCUMENT"},
+    "dcc":                    {"domain": "SALES", "label": "DCC SALES TRAINING"},
+    "uw":                     {"domain": "SALES", "label": "UNDERWRITING GUIDELINE"},
+    "business_insurance_nri": {"domain": "SALES", "label": "BUSINESS INSURANCE & NRI"},
+    "competition":            {"domain": "SALES", "label": "COMPETITION"},
+    "policy_status":          {"domain": "SALES", "label": "POLICY STATUS PROCESS"},
+    "hr_policy":              {"domain": "HR",    "label": "HR POLICY"},
+    "hr_self_help":           {"domain": "HR",    "label": "HR SELF-HELP READING"}
+  },
+
+  "_knowledge_bases": "Gateway tool target -> the domain of the knowledge base it searches.",
+  "knowledge_bases": {
+    "hr-knowledge-retrieval":    {"domain": "HR"},
+    "sales-knowledge-retrieval": {"domain": "SALES"}
+  },
+
+  "_search": "Passages the agent retrieves per question.",
+  "search": {"preferred_results": 8, "open_results": 6, "product_results": 4, "max_passages": 8},
+
+  "_folders": "First match wins. Keys are matched as prefixes of the S3 object key.",
+  "folders": [
+    {"bucket": "ely2-test-sales-data", "prefix": "documents/JointProducts/",              "category": "products"},
+    {"bucket": "ely2-test-sales-data", "prefix": "documents/DCC/Agency/",                 "category": "dcc", "channel": "agency"},
+    {"bucket": "ely2-test-sales-data", "prefix": "documents/DCC/Axis/",                   "category": "dcc", "channel": "axis"},
+    {"bucket": "ely2-test-sales-data", "prefix": "documents/DCC/DSF/",                    "category": "dcc", "channel": "dsf"},
+    {"bucket": "ely2-test-sales-data", "prefix": "documents/Underwriting/Agency/",        "category": "uw",  "channel": "agency"},
+    {"bucket": "ely2-test-sales-data", "prefix": "documents/Underwriting/Axis/",          "category": "uw",  "channel": "axis"},
+    {"bucket": "ely2-test-sales-data", "prefix": "documents/Underwriting/DSF/",           "category": "uw",  "channel": "dsf"},
+    {"bucket": "ely2-test-sales-data", "prefix": "documents/Underwriting/",               "category": "uw"},
+    {"bucket": "ely2-test-sales-data", "prefix": "documents/Competition/",                "category": "competition"},
+    {"bucket": "ely2-test-sales-data", "prefix": "documents/Business Insurance and NRI/", "category": "business_insurance_nri"},
+    {"bucket": "ely2-test-sales-data", "prefix": "documents/Finance/",                    "category": "dcc"},
+    {"bucket": "elydocuments",         "prefix": "HRIS/Self_Help/",                       "category": "hr_self_help"},
+    {"bucket": "elydocuments",         "prefix": "HRIS/Business Insurance and NRI/",      "category": "business_insurance_nri", "duplicate": true},
+    {"bucket": "elydocuments",         "prefix": "HRIS/Finance/",                         "category": "dcc", "duplicate": true},
+    {"bucket": "elydocuments",         "prefix": "HRIS/",                                 "category": "hr_policy"}
+  ],
+
+  "_file_overrides": "Applied after the folder rule, in order. 'match' is a case-insensitive regex on the file name; optional 'bucket' / 'prefix' narrow it.",
+  "file_overrides": [
+    {"match": "^FAQs for NRI",                "category": "business_insurance_nri"},
+    {"match": "policy_status_search",         "category": "policy_status"},
+    {"bucket": "elydocuments", "prefix": "HRIS/Finance/", "match": "incentive", "category": "hr_policy", "duplicate": false},
+    {"bucket": "ely2-test-sales-data", "prefix": "documents/DCC/",
+     "match": "^(Annuity_Pension_Taxation|FAQ's on incentive|FAQs for NRI|FAQs for Non-ULIP|FAQs for ulip|FAQs_commission|MyMoney_FAQs)",
+     "duplicate": true, "_why": "identical copies of documents/Finance/"}
+  ],
+
+  "_excluded_data_sources": "Data sources whose chunks duplicate another data source of the same knowledge base (HR KB: XQKICQKBKM indexes HRIS/HR Policies/, already covered by Z2FMWUOZC9 which indexes HRIS/).",
+  "excluded_data_sources": ["XQKICQKBKM"],
+
+  "_products": "aliases: how users write the product (from the old router catalog). file_patterns: lower-case substrings that identify the product in file names.",
+  "products": {
+    "smart_vibe":        {"name": "Smart VIBE", "aliases": ["Smart VIBE", "Smart Vibe", "Smart Value Income & Benefit Enhancer Plan", "SVIBEP", "Smart Vibe Plan", "SVIBE"], "file_patterns": ["smart vibe", "svibe", "value income"]},
+    "fts":               {"name": "Fast Track Super", "aliases": ["Fast Track Super", "FTS", "Max Life Fast Track Super", "Fast Track Super ULIP"], "file_patterns": ["fast track super", "fast_track_super", "(fts)", "dcc_fts"]},
+    "fwap":              {"name": "Flexi Wealth Advantage Plan", "aliases": ["Flexi Wealth Advantage", "FWAP", "FWP", "Axis Max Life Flexi Wealth Advantage Plan", "Flexi Wealth Plan"], "file_patterns": ["flexi wealth", "(fwap)", "_fwp_"]},
+    "osp":               {"name": "Online Savings Plan", "aliases": ["Online Savings Plan", "OSP", "Axis Max Life Online Savings Plan", "Online ULIP"], "file_patterns": ["online savings plan - (osp)"]},
+    "ospp":              {"name": "Online Savings Plan Plus", "aliases": ["Online Savings Plan Plus", "OSPP", "OSP Plus", "Axis Max Life Online Savings Plan Plus", "Online Savings Plus"], "file_patterns": ["online savings plan plus", "(ospp)", "osp_plus"]},
+    "pwp":               {"name": "Platinum Wealth Plan", "aliases": ["Platinum Wealth Plan", "PWP", "Axis Max Life Platinum Wealth Plan", "Platinum ULIP"], "file_patterns": ["platinum wealth", "(pwp)"]},
+    "fypp":              {"name": "Forever Young Pension Plan", "aliases": ["Forever Young Pension Plan", "FYPP", "Axis Max Life Forever Young Pension Plan", "Pension ULIP", "FY Pension"], "file_patterns": ["forever young", "forever_young", "(fypp)"]},
+    "step":              {"name": "Smart Total Elite Protection", "aliases": ["Smart Total Elite Protection", "STEP", "Axis Max Life Smart Total Elite Protection Term Plan"], "file_patterns": ["smart total elite", "(step)"]},
+    "stpp":              {"name": "Smart Term Plan Plus", "aliases": ["Smart Term Plan Plus", "STPP", "STTP", "Axis Max Life Smart Term Plan Plus"], "file_patterns": ["smart term plan plus", "(stpp)", "_sttp_"]},
+    "star_ulip":         {"name": "Smart Term with Additional Returns ULIP", "aliases": ["Smart Term with Additional Returns ULIP", "STAR ULIP", "Axis Max Life Smart Term with Additional Returns ULIP", "Smart Term Additional Returns ULIP"], "file_patterns": ["additional returns ulip", "(star ulip)"]},
+    "swag":              {"name": "Smart Wealth Advantage Guarantee Plan", "aliases": ["Smart Wealth Advantage Guarantee", "SWAG", "SWAG Non Par", "Axis Max Life Smart Wealth Advantage Guarantee Plan"], "file_patterns": ["advantage guarantee plan - (swag)", "swag_non_par"]},
+    "swag_pension":      {"name": "Smart Wealth Annuity Guaranteed Pension Plan", "aliases": ["Smart Wealth Annuity Guaranteed Pension Plan", "SWAG Pension", "Max Life Smart Wealth Annuity Guaranteed Pension Plan"], "file_patterns": ["swag pension", "swag_pension", "annuity guaranteed pension"]},
+    "swag_par":          {"name": "Smart Wealth Advantage Growth Par Plan", "aliases": ["Smart Wealth Advantage Growth Par Plan", "SWAG-PAR", "SWAG Par", "Smart Wealth Advantage Growth Participating Plan", "Max Life SWAG Par"], "file_patterns": ["swag-par", "swag_par", "growth par"]},
+    "swag_elite":        {"name": "Smart Wealth Advantage Guarantee Elite", "aliases": ["SWAG Elite", "Smart Wealth Advantage Guarantee Elite"], "file_patterns": ["swag_elite"]},
+    "smart_rise":        {"name": "Smart RISE", "aliases": ["Smart RISE", "Smart Rise", "Axis Max Life Smart RISE", "Smart Retirement Income with Sustained Earnings Plan"], "file_patterns": ["smart rise"]},
+    "swip":              {"name": "Smart Wealth Income Plan", "aliases": ["SWIP", "Smart Wealth Income Plan"], "file_patterns": ["_swip_"]},
+    "swp":               {"name": "Smart Wealth Plan", "aliases": ["SWP", "Smart Wealth Plan"], "file_patterns": ["_swp_"]},
+    "sewa":              {"name": "SEWA 2.0", "aliases": ["SEWA", "SEWA 2.0"], "file_patterns": ["sewa"]}
+  },
+
+  "competitors": ["HDFC Life", "HDFC", "ICICI Pru", "ICICI Prudential", "ICICI", "SBI Life", "Tata AIA", "Tata", "Bajaj Allianz", "Bajaj", "Kotak",
+                  "LIC", "PNB MetLife", "Aditya Birla", "ABSLI", "Birla Sun Life", "Canara HSBC", "Star Union", "Reliance Nippon", "Future Generali",
+                  "Edelweiss", "Bandhan Life", "Pramerica", "Aviva", "Ageas Federal", "IndiaFirst"],
+
+  "_intent_rules": "Case-insensitive regexes, checked in 'order'. The first rule that matches decides the preferred category for the search. 'unless' skips the rule when that other rule also matches.",
+  "intent_rules": {
+    "order": ["personal_hr", "competition", "nri", "business_insurance", "pitch", "underwriting", "hr", "self_help", "product"],
+    "personal_hr": {"category": "hr_policy",
+      "regex": "\\bmy (leave|leaves|balance|payslip|salary|incentive|incentives|ratings?|g ?& ?v|tds certificate|form 16|pf|uan|appraisal|promotion|attendance)\\b"},
+    "competition": {"category": "competition", "unless": "pitch", "regex": "@competitors|\\bcompetitors?\\b|\\bcompetition\\b"},
+    "nri": {"category": "business_insurance_nri",
+      "regex": "\\b(nri|nris|non[- ]?residents?|nre|nro|fcnr|dtaa|repatriat\\w*|cross[- ]border|oci|pio|qrops)\\b"},
+    "business_insurance": {"category": "business_insurance_nri", "unless": "underwriting",
+      "regex": "\\b(keyman|key man|employer[- –]employee|ee scheme|partnership insurance|mwpa|huf|business insurance|aurous)\\b"},
+    "pitch": {"category": "dcc",
+      "regex": "\\b(pitch|convince|objection|role ?play)\\b|how (do|should|can|to) (i |we )?(explain|position|present|sell|approach|handle)|\\b(vs\\.?|versus|compared? (with|to)|better than)\\s+(an? )?(fd|fixed deposits?|mutual funds?|mf|gold|equity|stocks?)\\b"},
+    "underwriting": {"category": "uw",
+      "regex": "\\b(non[- ]?medical|medical (tests?|grid|limits?|requirements?)|sum assured|underwrit\\w*|issuance|income proof|itr|bmi|smok\\w*|alcohol|gutka|tobacco|diabet\\w*|occupation|financial underwriting|vmer|lagega|chalega|ho sakta|issue ho)\\b|\\b(client|customer|proposer|life assured)\\b.{0,60}\\b(allowed|possible|eligible|eligibility|age|income)\\b"},
+    "hr": {"category": "hr_policy",
+      "regex": "\\b(leave|leaves|probation|payslip|salary|holidays?|hrbp|appraisal|attendance|maternity|paternity|gratuity|uan|notice period|resign\\w*|relocation|travel policy|car lease|reimburs\\w*|disha|posh|dress code|sabbatical|shuttle|intune|e-?nomination|referral|esop)\\b"},
+    "self_help": {"category": "hr_self_help",
+      "regex": "\\b(habits?|burnout|mindset|wellbeing|well-being|stress|motivation|resilien\\w*|work-life)\\b"},
+    "product": {"category": "products", "regex": "@products"}
+  }
+}

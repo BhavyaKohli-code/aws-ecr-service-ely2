@@ -1,3 +1,5 @@
+import re
+from pathlib import Path
 from typing import Any
 from strands import Agent
 from strands.agent.conversation_manager.null_conversation_manager import NullConversationManager
@@ -11,29 +13,13 @@ from sources.presign import presign_sources, select_sources
 app = BedrockAgentCoreApp()
 log = app.logger
 
-DEFAULT_SYSTEM_PROMPT = """
-You are ELY, an enterprise employee assistant.
-
-Answer the user's question using ONLY the knowledge base passages provided below. They were retrieved
-from the company knowledge bases this user has access to.
-
-Rules:
-- Every fact in your answer must come from the passages. Do not add facts, numbers, dates, examples or
-  general explanations from your own knowledge, even if you believe they are true.
-- If the passages do not contain the answer, start your reply with [NOT_AVAILABLE] and then say clearly
-  that this information is not available in the knowledge base. Do not guess, and do not answer
-  partially from general knowledge.
-- If the passages only cover part of the question, answer that part and say the rest is not available.
-- Do not mention passage numbers, tools or knowledge base internals.
-
-Answer naturally and concisely, as an enterprise assistant speaking directly to the employee.
-"""
+DEFAULT_SYSTEM_PROMPT = (Path(__file__).parent / "knowledge" / "system_prompt.md").read_text(encoding="utf-8")
 
 NO_ACCESS_ANSWER = "You don't have access to any knowledge base, so I can't answer company questions for you."
 NOT_FOUND_ANSWER = "I couldn't find any information about this in the knowledge base."
-# The model starts its reply with this when the passages don't answer the question; it is removed
-# before anything reaches the caller.
-NOT_AVAILABLE_MARKER = "[NOT_AVAILABLE]"
+# The model ends its reply with this line naming the passages it used; it is removed before anything
+# reaches the caller and decides which documents are returned as sources.
+USED_PASSAGES = re.compile(r"\s*USED_PASSAGES:\s*([^\n]*)\s*$", re.I)
 
 
 def _make_conversation_manager():
@@ -141,8 +127,13 @@ def _final(answer: str, sources: list, answer_status: str) -> dict:
     return {"type": "final", "answer": answer, "answer_status": answer_status, "sources": sources}
 
 
-def _strip_marker(text: str) -> str:
-    return text.replace(NOT_AVAILABLE_MARKER, "").lstrip(" :-\n")
+def _split_used_passages(text: str, count: int) -> tuple[str, list[int]]:
+    """Remove the trailing USED_PASSAGES line; return the clean text and the 1-based passage numbers used."""
+    match = USED_PASSAGES.search(text)
+    if not match:
+        return text, []
+    used = [int(n) for n in re.findall(r"\d+", match.group(1)) if 1 <= int(n) <= count]
+    return text[:match.start()].rstrip(), list(dict.fromkeys(used))
 
 
 def _get_authorization(context) -> str | None:
@@ -174,19 +165,20 @@ async def invoke(payload, context):
         yield _final(NO_ACCESS_ANSWER, [], "no_access")
         return
     query = _retrieval_query(agent.messages, prompt)
-    results = await search.search(query) if query else []
-    log.info("Retrieved %d passage(s) from %s", len(results), search.knowledge_bases)
-    yield {"type": "retrieval", "knowledge_bases": search.knowledge_bases, "passages": len(results)}
+    results, category = await search.search(query) if query else ([], None)
+    log.info("Retrieved %d passage(s) from %s (category %s)", len(results), search.knowledge_bases, category)
+    yield {"type": "retrieval", "knowledge_bases": search.knowledge_bases, "category": category, "passages": len(results)}
     if not results:
         yield _final(NOT_FOUND_ANSWER, [], "not_available")
         return
 
     # Answer from the retrieved passages only. They go in the system prompt for this turn,
     # so conversation memory keeps just the question and the answer.
-    agent.system_prompt = f"{DEFAULT_SYSTEM_PROMPT}\nKnowledge base passages:\n\n{format_passages(results)}"
-    answer = ""
-    not_available = False
+    agent.system_prompt = f"{DEFAULT_SYSTEM_PROMPT}\n\nKnowledge base passages:\n\n{format_passages(results)}"
+    answer, used = "", []
 
+    # The model is non-streaming (see model/load.py), so its whole reply, including the trailing
+    # USED_PASSAGES line, arrives in one text delta. Editing the delta also edits the stored message.
     async for event in agent.stream_async(
         prompt,
     ):
@@ -198,20 +190,19 @@ async def invoke(payload, context):
         if cbs is not None and not cbs.get("start"):
             continue
         delta = event["event"].get("contentBlockDelta", {}).get("delta", {})
-        if NOT_AVAILABLE_MARKER in delta.get("text", ""):
-            # Stripping here also strips the stored message, so remember it was there
-            not_available = True
-            delta["text"] = _strip_marker(delta["text"])
+        if "USED_PASSAGES" in delta.get("text", "").upper():
+            delta["text"], used = _split_used_passages(delta["text"], len(results))
         yield event
 
-    # Final structured event: the answer plus the documents it was built from,
-    # each with short-lived pre-signed links. No sources when the passages didn't answer it.
-    if not_available or NOT_AVAILABLE_MARKER in answer:
+    # Final structured event: the answer plus exactly the documents it used, each with short-lived
+    # pre-signed links. No passages used means the knowledge base doesn't cover the question.
+    answer, _ = _split_used_passages(answer, len(results))
+    if not used:
         log.info("Knowledge base does not cover the question")
-        yield _final(_strip_marker(answer), [], "not_available")
+        yield _final(answer, [], "not_available")
         return
-    sources = presign_sources(select_sources(results))
-    log.info("Answer built from %d source document(s)", len(sources))
+    sources = presign_sources(select_sources([results[i - 1] for i in used]))
+    log.info("Answer built from passages %s (%d document(s))", used, len(sources))
     yield _final(answer, sources, "answered")
 
 
