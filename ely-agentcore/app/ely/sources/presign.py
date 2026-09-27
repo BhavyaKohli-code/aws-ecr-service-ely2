@@ -31,7 +31,7 @@ def _s3_client():
     return _s3
 
 
-def _iter_kb_results(tool_result: dict):
+def iter_kb_results(tool_result: dict):
     """Yield Knowledge Base results from a Gateway retrieval tool result."""
     structured = tool_result.get("structuredContent")
     if isinstance(structured, dict) and isinstance(structured.get("results"), list):
@@ -49,26 +49,22 @@ def _iter_kb_results(tool_result: dict):
             yield from payload["results"]
 
 
-def collect_sources(messages: list) -> list[dict]:
-    """Collect the distinct S3 documents returned by retrieval tools in these messages.
+def select_sources(results: list[dict]) -> list[dict]:
+    """The distinct S3 documents among knowledge base results.
 
     One entry per document, keeping its best-scoring chunk, ordered by score.
     """
     by_uri: dict[str, dict] = {}
-    for message in messages:
-        for block in message.get("content", []):
-            tool_result = block.get("toolResult") if isinstance(block, dict) else None
-            if not tool_result or tool_result.get("status") == "error":
-                continue
-            for result in _iter_kb_results(tool_result):
-                uri = (result.get("location") or {}).get("s3Location", {}).get("uri")
-                if not uri or not uri.startswith("s3://"):
-                    continue
-                score = result.get("score") or 0.0
-                if uri in by_uri and by_uri[uri]["score"] >= score:
-                    continue
-                text = ((result.get("content") or {}).get("text") or "")
-                by_uri[uri] = {"s3_uri": uri, "score": score, "snippet": " ".join(text.split())[:500]}
+    for result in results:
+        uri = (result.get("location") or {}).get("s3Location", {}).get("uri")
+        if not uri or not uri.startswith("s3://"):
+            continue
+        score = result.get("score") or 0.0
+        if uri in by_uri and by_uri[uri]["score"] >= score:
+            continue
+        text = ((result.get("content") or {}).get("text") or "")
+        by_uri[uri] = {"s3_uri": uri, "score": score, "snippet": " ".join(text.split())[:500],
+                       "knowledge_base": result.get("knowledge_base")}
     return sorted(by_uri.values(), key=lambda s: s["score"], reverse=True)[:MAX_SOURCES]
 
 
