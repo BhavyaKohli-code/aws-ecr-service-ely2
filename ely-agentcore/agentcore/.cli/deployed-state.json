@@ -1,3 +1,41 @@
 {
-  "targets": {}
+  "targets": {
+    "default": {
+      "resources": {
+        "runtimes": {
+          "ely": {
+            "runtimeId": "ely_ely-1jeUZ8Ck5s",
+            "runtimeArn": "arn:aws:bedrock-agentcore:ap-south-1:789270642392:runtime/ely_ely-1jeUZ8Ck5s",
+            "roleArn": "arn:aws:iam::789270642392:role/AgentCore-ely-default-ApplicationAgentElyRuntimeExe-uDBa69pYh06J"
+          }
+        },
+        "memories": {
+          "elyMemory": {
+            "memoryId": "ely_elyMemory-43UJldDalE",
+            "memoryArn": "arn:aws:bedrock-agentcore:ap-south-1:789270642392:memory/ely_elyMemory-43UJldDalE"
+          }
+        },
+        "policyEngines": {
+          "elyPolicyEngine": {
+            "policyEngineId": "ely_elyPolicyEngine-es4hv6r1kz",
+            "policyEngineArn": "arn:aws:bedrock-agentcore:ap-south-1:789270642392:policy-engine/ely_elyPolicyEngine-es4hv6r1kz"
+          }
+        },
+        "policies": {
+          "elyPolicyEngine/ely_hr_fulltime_only": {
+            "policyId": "ely_hr_fulltime_only-xaprkneab2",
+            "policyArn": "arn:aws:bedrock-agentcore:ap-south-1:789270642392:policy-engine/ely_elyPolicyEngine-es4hv6r1kz/policy/ely_hr_fulltime_only-xaprkneab2",
+            "engineName": "elyPolicyEngine"
+          },
+          "elyPolicyEngine/ely_sales_employees_and_partners": {
+            "policyId": "ely_sales_employees_and_partners-4eem2ov43i",
+            "policyArn": "arn:aws:bedrock-agentcore:ap-south-1:789270642392:policy-engine/ely_elyPolicyEngine-es4hv6r1kz/policy/ely_sales_employees_and_partners-4eem2ov43i",
+            "engineName": "elyPolicyEngine"
+          }
+        },
+        "stackName": "AgentCore-ely-default",
+        "deployHash": "cc82d2c08c56b5c0"
+      }
+    }
+  }
 }
