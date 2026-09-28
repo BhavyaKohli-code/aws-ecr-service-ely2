@@ -20,7 +20,7 @@
       "envVars": [
         {
           "name": "BEDROCK_MODEL_ID",
-          "value": "mistral.ministral-3-8b-instruct"
+          "value": "openai.gpt-oss-20b-1:0"
         },
         {
           "name": "GATEWAY_URL",

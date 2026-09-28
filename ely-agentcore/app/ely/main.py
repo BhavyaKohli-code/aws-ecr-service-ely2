@@ -230,6 +230,16 @@ def _remember_answer(agent, status: str, sources: list) -> None:
             log.exception("Could not save the answer's sources to memory")
 
 
+def _drop_reasoning(messages: list) -> None:
+    """Remove reasoning blocks from earlier replies (reasoning models add them), so only the question and
+    answer text are sent back to the model. Memory may still hold them; they are removed again each turn."""
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, list) and any(isinstance(b, dict) and "reasoningContent" in b for b in content):
+            kept = [b for b in content if not (isinstance(b, dict) and "reasoningContent" in b)]
+            message["content"] = kept or [{"text": "(no answer)"}]  # Bedrock rejects empty messages
+
+
 def _get_authorization(context) -> str | None:
     """The caller's Cognito token, forwarded by Runtime via requestHeaderAllowlist."""
     headers = getattr(context, "request_headers", None) or {}
@@ -284,6 +294,7 @@ async def invoke(payload, context):
     answer = ""
     not_available = False
     used = None
+    _drop_reasoning(agent.messages)
 
     async for event in agent.stream_async(
         prompt,
@@ -296,6 +307,8 @@ async def invoke(payload, context):
         if cbs is not None and not cbs.get("start"):
             continue
         delta = event["event"].get("contentBlockDelta", {}).get("delta", {})
+        if "reasoningContent" in delta:  # the model's private reasoning is never sent to the caller
+            continue
         # The model is non-streaming (see model/load.py), so its whole reply arrives in one text delta.
         # Stripping here also strips the stored message, so remember what was there.
         if "USED_PASSAGES" in delta.get("text", "").upper():
