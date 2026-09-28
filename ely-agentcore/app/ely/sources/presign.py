@@ -52,20 +52,22 @@ def iter_kb_results(tool_result: dict):
 def select_sources(results: list[dict]) -> list[dict]:
     """The distinct S3 documents among knowledge base results.
 
-    One entry per document, keeping its best-scoring chunk, ordered by score.
+    One entry per document, keeping its best-scoring chunk, ordered by score. Documents are matched by
+    file name, so a file stored in both buckets is listed once.
     """
-    by_uri: dict[str, dict] = {}
+    by_name: dict[str, dict] = {}
     for result in results:
         uri = (result.get("location") or {}).get("s3Location", {}).get("uri")
         if not uri or not uri.startswith("s3://"):
             continue
+        name = PurePosixPath(uri).name.lower()
         score = result.get("score") or 0.0
-        if uri in by_uri and by_uri[uri]["score"] >= score:
+        if name in by_name and by_name[name]["score"] >= score:
             continue
         text = ((result.get("content") or {}).get("text") or "")
-        by_uri[uri] = {"s3_uri": uri, "score": score, "snippet": " ".join(text.split())[:500],
-                       "knowledge_base": result.get("knowledge_base")}
-    return sorted(by_uri.values(), key=lambda s: s["score"], reverse=True)[:MAX_SOURCES]
+        by_name[name] = {"s3_uri": uri, "score": score, "snippet": " ".join(text.split())[:500],
+                         "knowledge_base": result.get("knowledge_base")}
+    return sorted(by_name.values(), key=lambda s: s["score"], reverse=True)[:MAX_SOURCES]
 
 
 def presign_sources(sources: list[dict]) -> list[dict]:

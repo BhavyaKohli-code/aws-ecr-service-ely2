@@ -322,7 +322,11 @@ async def invoke(payload, context):
     # each with short-lived pre-signed links. No sources when the passages didn't answer it.
     answer, used_in_result = _split_used_passages(answer, len(results))
     used = used if used is not None else used_in_result
-    if not_available or NOT_AVAILABLE_MARKER in answer:
+    # Passages used means the question was (at least partly) answered, even if the model also marked
+    # part of it as not available; the marker alone decides only when no passage was used.
+    not_available = (not_available or NOT_AVAILABLE_MARKER in answer) and not used
+    answer = _strip_marker(answer)
+    if not_available:
         log.info("Knowledge base does not cover the question")
         _remember_answer(agent, "not_available", [])
         yield _final(_strip_marker(answer), [], "not_available")
