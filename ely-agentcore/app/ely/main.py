@@ -1,3 +1,4 @@
+import re
 from typing import Any
 from strands import Agent
 from strands.agent.conversation_manager.null_conversation_manager import NullConversationManager
@@ -24,16 +25,40 @@ Rules:
   that this information is not available in the knowledge base. Do not guess, and do not answer
   partially from general knowledge.
 - If the passages only cover part of the question, answer that part and say the rest is not available.
-- Do not mention passage numbers, tools or knowledge base internals.
+- Do not mention passage numbers, tools or knowledge base internals in the answer.
+- If the user asks about your previous answer (for example whether it came from HR or Sales), use the
+  "Previous answer" note below, which names the documents that answer was built from.
 
 Answer naturally and concisely, as an enterprise assistant speaking directly to the employee.
+
+Then, on the very last line, write the numbers of the passages you actually used:
+USED_PASSAGES: 2, 5
+If you used no passage, write:
+USED_PASSAGES: none
 """
 
 NO_ACCESS_ANSWER = "You don't have access to any knowledge base, so I can't answer company questions for you."
 NOT_FOUND_ANSWER = "I couldn't find any information about this in the knowledge base."
+NO_SOURCE_ANSWER = ("My previous answer wasn't based on any document: the knowledge base didn't have "
+                    "information on that question.")
 # The model starts its reply with this when the passages don't answer the question; it is removed
 # before anything reaches the caller.
 NOT_AVAILABLE_MARKER = "[NOT_AVAILABLE]"
+# The model ends its reply with this line naming the passages it used; it is removed before anything
+# reaches the caller and decides which documents are returned as sources.
+USED_PASSAGES = re.compile(r"\s*USED_PASSAGES:\s*([^\n]*)\s*$", re.I)
+
+# "Which document did you answer that from?" and similar: answered from the sources saved with the
+# previous answer, without searching again (a new search would return different documents).
+_SOURCE_WORDS = re.compile(r"\b(documents?|docs?|sources?|files?|references?|links?)\b", re.I)
+_REFERS_BACK = re.compile(
+    r"\b(above|previous|earlier|last answer|that answer|this answer|your answer|did you|you (just )?(used?|answered|got|found|referred|took)"
+    r"|says? (that|this)|sources? (of|for) (that|this|it)|(that|this|it) (is |was )?(from|come from|came from)"
+    r"|(that|this|the same) (document|doc|file|source|link)s?)\b", re.I)
+_WHERE_FROM = re.compile(r"\bwhere (did|do) you (get|find|take|read|see)\b", re.I)
+# Answers are kept in session state under this key: {"status": ..., "sources": [...]}
+LAST_ANSWER_KEY = "ely_last_answer"
+KNOWLEDGE_BASE_LABELS = {"hr-knowledge-retrieval": "HR", "sales-knowledge-retrieval": "Sales"}
 
 
 def _make_conversation_manager():
@@ -145,6 +170,66 @@ def _strip_marker(text: str) -> str:
     return text.replace(NOT_AVAILABLE_MARKER, "").lstrip(" :-\n")
 
 
+def _split_used_passages(text: str, count: int) -> tuple[str, list[int] | None]:
+    """Remove the trailing USED_PASSAGES line; return the clean text and the 1-based passage numbers used.
+
+    None means the line was missing (the model didn't follow the format); [] means it used no passage.
+    """
+    match = USED_PASSAGES.search(text)
+    if not match:
+        return text, None
+    used = [int(n) for n in re.findall(r"\d+", match.group(1)) if 1 <= int(n) <= count]
+    return text[:match.start()].rstrip(), list(dict.fromkeys(used))
+
+
+def is_source_question(prompt) -> bool:
+    """True for a follow-up asking which document the previous answer came from."""
+    if not isinstance(prompt, str):
+        return False
+    if _WHERE_FROM.search(prompt) and len(prompt.split()) <= 12:
+        return True
+    if not _SOURCE_WORDS.search(prompt):
+        return False
+    words = len(prompt.split())
+    return words <= 4 or (words <= 15 and bool(_REFERS_BACK.search(prompt)))
+
+
+def _knowledge_base_label(knowledge_base: str | None) -> str:
+    return KNOWLEDGE_BASE_LABELS.get(knowledge_base or "", knowledge_base or "knowledge base")
+
+
+def _previous_answer_note(last: dict | None) -> str:
+    """One line for the system prompt naming the documents the previous answer was built from."""
+    if not last:
+        return ""
+    if not last.get("sources"):
+        return "\nPrevious answer: it was not based on any document (the knowledge base did not cover it).\n"
+    docs = "; ".join(f"{s['s3_uri'].rsplit('/', 1)[-1]} ({_knowledge_base_label(s.get('knowledge_base'))} knowledge base)"
+                     for s in last["sources"])
+    return f"\nPrevious answer: it was built from {docs}.\n"
+
+
+def _source_answer(last: dict) -> tuple[str, list, str]:
+    """Answer, fresh sources and status for 'which document did you use?', from the saved previous answer."""
+    if not last.get("sources"):
+        return NO_SOURCE_ANSWER, [], "not_available"
+    sources = presign_sources(last["sources"])
+    lines = [f"- {s['title']} ({_knowledge_base_label(s.get('knowledge_base'))} knowledge base)" for s in sources]
+    return "My previous answer came from:\n" + "\n".join(lines), sources, "answered"
+
+
+def _remember_answer(agent, status: str, sources: list) -> None:
+    """Save the answer's sources in session state, which AgentCore Memory keeps with the session."""
+    keep = ("s3_uri", "score", "snippet", "knowledge_base")
+    agent.state.set(LAST_ANSWER_KEY, {"status": status, "sources": [{k: s.get(k) for k in keep} for s in sources]})
+    session_manager = getattr(agent, "_session_manager", None)
+    if session_manager:  # the state changed after the turn ended, so it needs its own save
+        try:
+            session_manager.sync_agent(agent)
+        except Exception:
+            log.exception("Could not save the answer's sources to memory")
+
+
 def _get_authorization(context) -> str | None:
     """The caller's Cognito token, forwarded by Runtime via requestHeaderAllowlist."""
     headers = getattr(context, "request_headers", None) or {}
@@ -173,19 +258,32 @@ async def invoke(payload, context):
     if not search.knowledge_bases:
         yield _final(NO_ACCESS_ANSWER, [], "no_access")
         return
+
+    # "Which document was that from?": answer from the saved sources of the previous answer
+    last = agent.state.get(LAST_ANSWER_KEY)
+    if last and is_source_question(prompt):
+        answer, sources, status = _source_answer(last)
+        log.info("Source question answered from the previous answer's %d source(s)", len(sources))
+        yield {"event": {"contentBlockDelta": {"delta": {"text": answer}}}}
+        yield _final(answer, sources, status)
+        return
+
     query = _retrieval_query(agent.messages, prompt)
     results = await search.search(query) if query else []
     log.info("Retrieved %d passage(s) from %s", len(results), search.knowledge_bases)
     yield {"type": "retrieval", "knowledge_bases": search.knowledge_bases, "passages": len(results)}
     if not results:
+        _remember_answer(agent, "not_available", [])
         yield _final(NOT_FOUND_ANSWER, [], "not_available")
         return
 
     # Answer from the retrieved passages only. They go in the system prompt for this turn,
     # so conversation memory keeps just the question and the answer.
-    agent.system_prompt = f"{DEFAULT_SYSTEM_PROMPT}\nKnowledge base passages:\n\n{format_passages(results)}"
+    agent.system_prompt = (f"{DEFAULT_SYSTEM_PROMPT}{_previous_answer_note(last)}\n"
+                           f"Knowledge base passages:\n\n{format_passages(results)}")
     answer = ""
     not_available = False
+    used = None
 
     async for event in agent.stream_async(
         prompt,
@@ -198,20 +296,35 @@ async def invoke(payload, context):
         if cbs is not None and not cbs.get("start"):
             continue
         delta = event["event"].get("contentBlockDelta", {}).get("delta", {})
+        # The model is non-streaming (see model/load.py), so its whole reply arrives in one text delta.
+        # Stripping here also strips the stored message, so remember what was there.
+        if "USED_PASSAGES" in delta.get("text", "").upper():
+            delta["text"], used = _split_used_passages(delta["text"], len(results))
         if NOT_AVAILABLE_MARKER in delta.get("text", ""):
-            # Stripping here also strips the stored message, so remember it was there
             not_available = True
             delta["text"] = _strip_marker(delta["text"])
         yield event
 
     # Final structured event: the answer plus the documents it was built from,
     # each with short-lived pre-signed links. No sources when the passages didn't answer it.
+    answer, used_in_result = _split_used_passages(answer, len(results))
+    used = used if used is not None else used_in_result
     if not_available or NOT_AVAILABLE_MARKER in answer:
         log.info("Knowledge base does not cover the question")
+        _remember_answer(agent, "not_available", [])
         yield _final(_strip_marker(answer), [], "not_available")
         return
-    sources = presign_sources(select_sources(results))
-    log.info("Answer built from %d source document(s)", len(sources))
+    if used == []:
+        # Answered without any passage, e.g. "is that from HR or Sales?" answered from the previous-answer
+        # note: no sources, and the previous answer's saved sources stay as they are.
+        log.info("Answered without using any passage")
+        yield _final(answer, [], "answered")
+        return
+    # Exactly the passages the model used; all of them if it left out the USED_PASSAGES line
+    sources = select_sources([results[i - 1] for i in used] if used else results)
+    _remember_answer(agent, "answered", sources)
+    sources = presign_sources(sources)
+    log.info("Answer built from passages %s (%d document(s))", used, len(sources))
     yield _final(answer, sources, "answered")
 
 
