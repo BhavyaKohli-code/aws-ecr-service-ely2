@@ -26,7 +26,10 @@ Rules:
   general explanations from your own knowledge, even if you believe they are true.
 - If the passages do not contain the answer, start your reply with [NOT_AVAILABLE] and then say clearly
   that this information is not available in the knowledge base. Do not guess, and do not answer
-  partially from general knowledge.
+  partially from general knowledge. If the question clearly belongs to a knowledge base the user cannot
+  search (see "Knowledge bases this user can search" below; for example a leave or salary question from a
+  user who can only search Sales), say that this topic is covered by that other knowledge base, which they
+  don't have access to.
 - If the passages only cover part of the question, answer that part and say the rest is not available.
 - When passages from different documents each cover part of the question, combine them into one complete
   answer (for example a leave policy, its FAQ and the HR handbook together).
@@ -338,7 +341,10 @@ async def invoke(payload, context):
     # so conversation memory keeps just the question and the answer.
     context_note = (f"\nThe user has said this question is about: {_context_label(context, True)}.\n"
                     if context else "")
-    agent.system_prompt = (f"{DEFAULT_SYSTEM_PROMPT}{_previous_answer_note(last)}{context_note}\n"
+    access_note = ("\nKnowledge bases this user can search: "
+                   f"{', '.join(_knowledge_base_label(k) for k in search.knowledge_bases)} "
+                   f"(the company has: {', '.join(KNOWLEDGE_BASE_LABELS.values())}).\n")
+    agent.system_prompt = (f"{DEFAULT_SYSTEM_PROMPT}{access_note}{_previous_answer_note(last)}{context_note}\n"
                            f"Knowledge base passages:\n\n{format_passages(results)}")
     answer = ""
     not_available = False

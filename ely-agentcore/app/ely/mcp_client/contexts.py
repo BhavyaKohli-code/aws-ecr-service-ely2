@@ -37,17 +37,20 @@ Passages found in each area:
 
 {areas}
 
-The default is COMPLEMENTARY: one good answer can combine what the areas say. That includes areas that
-repeat each other, add detail to each other, or give different values for different cases (for example a
-limit per channel, product or age band), because one answer can simply list each case. It also includes
-areas where only one actually answers the question and the others are unrelated.
+First check whether the passages of each area actually answer the question, not just share some words with
+it. If no area answers it, reply NONE: asking the user to pick an area would only lead to "not available".
 
-Answer DIFFERENT only if the question means different things in different areas, so a combined answer
-would mix unrelated subjects and the user must say which one they mean. Example: "What are the
-incentives?" when one area is about employee incentive plans and another about sales commission for
-advisors.
+Otherwise the default is COMPLEMENTARY: one good answer can combine what the areas say. That includes areas
+that repeat each other, add detail to each other, or give different values for different cases (for
+example a limit per channel, product or age band), because one answer can simply list each case. It also
+includes the case where only one area actually answers the question and the others are unrelated.
 
-Reply with exactly one word: DIFFERENT or COMPLEMENTARY."""
+Answer DIFFERENT only if at least two areas each actually answer the question, but the question means
+different things in them, so a combined answer would mix unrelated subjects and the user must say which one
+they mean. Example: "What are the incentives?" when one area is about employee incentive plans and another
+about sales commission for advisors.
+
+Reply with exactly one word: NONE, COMPLEMENTARY or DIFFERENT."""
 
 _bedrock = None
 
@@ -128,7 +131,8 @@ def context_options(results: list[dict]) -> list[dict]:
 
 def areas_differ(question: str, options: list[dict], results: list[dict]) -> bool:
     """Whether `question` means different things in the folders in `options`, judged by the model from each
-    folder's best passages. If the model can't be reached or replies unclearly, the folders are offered."""
+    folder's best passages. Choices are offered only on a clear DIFFERENT: if no folder answers the question,
+    or the model can't be reached or replies unclearly, the question is answered from all of them."""
     global _bedrock
     blocks = []
     for option in options:
@@ -144,17 +148,17 @@ def areas_differ(question: str, options: list[dict], results: list[dict]) -> boo
         response = _bedrock.converse(
             modelId=COMPARE_MODEL_ID,
             messages=[{"role": "user", "content": [{"text": prompt}]}],
-            inferenceConfig={"temperature": 0.0, "maxTokens": 2000},
+            inferenceConfig={"temperature": 0.0, "maxTokens": 20},
         )
         reply = " ".join(b["text"] for b in response["output"]["message"]["content"] if "text" in b).upper()
     except Exception:
-        logger.exception("Could not compare the areas; asking the user instead")
-        return True
-    if "COMPLEMENTARY" in reply and "DIFFERENT" not in reply:
+        logger.exception("Could not compare the areas; answering from all of them")
         return False
-    if "DIFFERENT" not in reply:
-        logger.warning("Unclear area comparison reply %s; asking the user", json.dumps(reply[:200]))
-    return True
+    # The verdict is the first word; the model sometimes explains it after
+    verdict = re.sub(r"[^A-Z]", " ", reply).split()[:1]
+    if verdict not in (["NONE"], ["COMPLEMENTARY"], ["DIFFERENT"]):
+        logger.warning("Unclear area comparison reply %s; answering from all areas", json.dumps(reply[:200]))
+    return verdict == ["DIFFERENT"]
 
 
 def parse_context(raw) -> dict | None:
