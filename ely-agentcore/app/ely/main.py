@@ -7,6 +7,7 @@ from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from model.load import load_model
 from mcp_client.client import GatewayAuth, get_gateway_mcp_client
 from mcp_client.contexts import areas_differ, context_options, folder_label, parse_context
+from mcp_client.follow_up import standalone_query
 from mcp_client.knowledge_search import MAX_SEARCH_RESULTS, KnowledgeSearch, format_passages
 from memory.session import get_memory_session_manager
 from sources.presign import presign_sources, select_sources
@@ -153,15 +154,15 @@ def _user_text(message: dict) -> str:
     return " ".join(b["text"] for b in message.get("content", []) if isinstance(b, dict) and b.get("text")).strip()
 
 
-def _retrieval_query(history: list, prompt) -> str:
-    """The text to search for: the current question, prefixed by the previous one for follow-ups."""
+def _question_and_previous(history: list, prompt) -> tuple[str, str]:
+    """The current question and the user's previous one ("" if this is the first)."""
     if isinstance(prompt, str):
         current, earlier = prompt.strip(), history
     else:  # a caller-supplied message list: search for its last user message
         users = [m for m in prompt if m.get("role") == "user" and _user_text(m)]
         current, earlier = (_user_text(users[-1]) if users else ""), history + prompt[:-1]
     previous = next((_user_text(m) for m in reversed(earlier) if m.get("role") == "user" and _user_text(m)), "")
-    return f"{previous}\n{current}" if previous else current
+    return current, previous
 
 
 def _final(answer: str, sources: list, answer_status: str) -> dict:
@@ -298,9 +299,11 @@ async def invoke(payload, context):
     if context and context["knowledge_base"] not in search.knowledge_bases:
         context = None
 
-    query = _retrieval_query(agent.messages, prompt)
+    # Search for the question on its own; a follow-up gets the subject it refers to from the previous question
+    current, previous = _question_and_previous(agent.messages, prompt)
+    query = await asyncio.to_thread(standalone_query, previous, current) if current else ""
     results = await search.search(query, context) if query else []
-    log.info("Retrieved %d passage(s) from %s (context: %s)", len(results), search.knowledge_bases, context)
+    log.info("Retrieved %d passage(s) from %s for %r (context: %s)", len(results), search.knowledge_bases, query, context)
     yield {"type": "retrieval", "knowledge_bases": search.knowledge_bases, "passages": len(results)}
     if not results:
         _remember_answer(agent, "not_available", [])
