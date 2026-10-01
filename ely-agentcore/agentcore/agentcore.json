@@ -20,7 +20,11 @@
       "envVars": [
         {
           "name": "BEDROCK_MODEL_ID",
-          "value": "openai.gpt-oss-20b-1:0"
+          "value": "in.anthropic.claude-sonnet-5"
+        },
+        {
+          "name": "COMPARE_MODEL_ID",
+          "value": "in.anthropic.claude-haiku-4-5-20251001-v1:0"
         },
         {
           "name": "GATEWAY_URL",

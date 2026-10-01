@@ -26,7 +26,8 @@ MAX_CONTEXT_OPTIONS = int(os.getenv("MAX_CONTEXT_OPTIONS", "4"))
 # Passages per folder, and characters per passage, shown to the model when it judges whether the folders differ
 COMPARE_PASSAGES = 2
 COMPARE_CHARS = 1500
-BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "openai.gpt-oss-20b-1:0")
+# A fast model is enough to compare a few passages; this keeps the extra step under a second
+COMPARE_MODEL_ID = os.getenv("COMPARE_MODEL_ID", "in.anthropic.claude-haiku-4-5-20251001-v1:0")
 
 COMPARE_PROMPT = """You decide whether an assistant must ask the user which area their question is about.
 
@@ -138,7 +139,7 @@ def areas_differ(question: str, options: list[dict], results: list[dict]) -> boo
         if _bedrock is None:
             _bedrock = boto3.client("bedrock-runtime")
         response = _bedrock.converse(
-            modelId=BEDROCK_MODEL_ID,
+            modelId=COMPARE_MODEL_ID,
             messages=[{"role": "user", "content": [{"text": prompt}]}],
             inferenceConfig={"temperature": 0.0, "maxTokens": 2000},
         )
