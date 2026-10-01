@@ -2,9 +2,9 @@
 
 Documents live at s3://<bucket>/DMS_copilot/<HR|Sales>/<folder>/..., and the top-level folder (uw, dcc,
 wpc, payroll, ...) is what tells apart answers that match equally well. When good matches come from more
-than one folder and the model judges that they answer the question differently, ELY asks the user to pick
-one before answering, then searches only that folder. Folders that agree or add to each other are answered
-from together.
+than one folder and the model judges that the question means different things in them, ELY asks the user to
+pick one before answering, then searches only that folder. Folders whose passages can be combined into one
+answer are answered from together.
 """
 import json
 import logging
@@ -37,12 +37,15 @@ Passages found in each area:
 
 {areas}
 
-Answer DIFFERENT if the areas would give different or conflicting answers to this question, so the right
-answer depends on which area the user means: different numbers, limits, ages, eligibility, documents, rules,
-steps or processes, or the areas are about different things that happen to share words.
-Answer COMPLEMENTARY if the areas say the same thing, or one adds detail to the other without contradicting
-it, so a single answer can combine them. Also answer COMPLEMENTARY if only one area actually answers the
-question and the others are unrelated.
+The default is COMPLEMENTARY: one good answer can combine what the areas say. That includes areas that
+repeat each other, add detail to each other, or give different values for different cases (for example a
+limit per channel, product or age band), because one answer can simply list each case. It also includes
+areas where only one actually answers the question and the others are unrelated.
+
+Answer DIFFERENT only if the question means different things in different areas, so a combined answer
+would mix unrelated subjects and the user must say which one they mean. Example: "What are the
+incentives?" when one area is about employee incentive plans and another about sales commission for
+advisors.
 
 Reply with exactly one word: DIFFERENT or COMPLEMENTARY."""
 
@@ -124,8 +127,8 @@ def context_options(results: list[dict]) -> list[dict]:
 
 
 def areas_differ(question: str, options: list[dict], results: list[dict]) -> bool:
-    """Whether the folders in `options` answer `question` differently, judged by the model from each folder's
-    best passages. Asking is the safe side: if the model can't be reached or replies unclearly, it's True."""
+    """Whether `question` means different things in the folders in `options`, judged by the model from each
+    folder's best passages. If the model can't be reached or replies unclearly, the folders are offered."""
     global _bedrock
     blocks = []
     for option in options:
