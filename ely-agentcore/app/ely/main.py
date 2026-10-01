@@ -1,3 +1,4 @@
+import asyncio
 import re
 from typing import Any
 from strands import Agent
@@ -5,7 +6,7 @@ from strands.agent.conversation_manager.null_conversation_manager import NullCon
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from model.load import load_model
 from mcp_client.client import GatewayAuth, get_gateway_mcp_client
-from mcp_client.contexts import context_options, folder_label, parse_context
+from mcp_client.contexts import areas_differ, context_options, folder_label, parse_context
 from mcp_client.knowledge_search import MAX_SEARCH_RESULTS, KnowledgeSearch, format_passages
 from memory.session import get_memory_session_manager
 from sources.presign import presign_sources, select_sources
@@ -306,7 +307,8 @@ async def invoke(payload, context):
         yield _final(NOT_FOUND_ANSWER, [], "not_available")
         return
 
-    # Good matches in more than one folder: ask which area is meant instead of answering. Nothing is
+    # Good matches in more than one folder that answer the question differently: ask which area is meant
+    # instead of answering. Folders that agree or add to each other are answered from together. Nothing is
     # added to memory, so the same question comes back with the chosen context.
     if not context:
         options = context_options(results)
@@ -314,10 +316,12 @@ async def invoke(payload, context):
             several_kbs = len({o["knowledge_base"] for o in options}) > 1
             for option in options:
                 option["label"] = _context_label(option, several_kbs)
-            log.info("Asking which context is meant: %s", [o["label"] for o in options])
-            yield {"event": {"contentBlockDelta": {"delta": {"text": CLARIFY_QUESTION}}}}
-            yield _clarify(options)
-            return
+            differ = await asyncio.to_thread(areas_differ, query, options, results)
+            log.info("Areas %s answer %s", [o["label"] for o in options], "differently" if differ else "alike")
+            if differ:
+                yield {"event": {"contentBlockDelta": {"delta": {"text": CLARIFY_QUESTION}}}}
+                yield _clarify(options)
+                return
     # All results decide the choices above; the model reads only the best few
     results = results[:MAX_SEARCH_RESULTS]
 

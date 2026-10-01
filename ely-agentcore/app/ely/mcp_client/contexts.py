@@ -2,11 +2,19 @@
 
 Documents live at s3://<bucket>/DMS_copilot/<HR|Sales>/<folder>/..., and the top-level folder (uw, dcc,
 wpc, payroll, ...) is what tells apart answers that match equally well. When good matches come from more
-than one folder, ELY asks the user to pick one before answering, then searches only that folder.
+than one folder and the model judges that they answer the question differently, ELY asks the user to pick
+one before answering, then searches only that folder. Folders that agree or add to each other are answered
+from together.
 """
+import json
+import logging
 import os
 import re
 from pathlib import PurePosixPath
+
+import boto3
+
+logger = logging.getLogger(__name__)
 
 # A match at or above this score counts towards a folder being offered as a choice
 CLARIFY_MIN_SCORE = float(os.getenv("CLARIFY_MIN_SCORE", "0.5"))
@@ -15,6 +23,29 @@ CLARIFY_MIN_SCORE = float(os.getenv("CLARIFY_MIN_SCORE", "0.5"))
 CLARIFY_MARGIN = float(os.getenv("CLARIFY_MARGIN", "0.10"))
 # At most this many choices are offered, best match first
 MAX_CONTEXT_OPTIONS = int(os.getenv("MAX_CONTEXT_OPTIONS", "4"))
+# Passages per folder, and characters per passage, shown to the model when it judges whether the folders differ
+COMPARE_PASSAGES = 2
+COMPARE_CHARS = 1500
+BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "openai.gpt-oss-20b-1:0")
+
+COMPARE_PROMPT = """You decide whether an assistant must ask the user which area their question is about.
+
+Question: {question}
+
+Passages found in each area:
+
+{areas}
+
+Answer DIFFERENT if the areas would give different or conflicting answers to this question, so the right
+answer depends on which area the user means: different numbers, limits, ages, eligibility, documents, rules,
+steps or processes, or the areas are about different things that happen to share words.
+Answer COMPLEMENTARY if the areas say the same thing, or one adds detail to the other without contradicting
+it, so a single answer can combine them. Also answer COMPLEMENTARY if only one area actually answers the
+question and the others are unrelated.
+
+Reply with exactly one word: DIFFERENT or COMPLEMENTARY."""
+
+_bedrock = None
 
 # Display names for folders; any other folder is shown as its name with underscores as spaces
 FOLDER_LABELS = {
@@ -89,6 +120,37 @@ def context_options(results: list[dict]) -> list[dict]:
     if options:
         options = [o for o in options if o["score"] >= options[0]["score"] - CLARIFY_MARGIN]
     return options[:MAX_CONTEXT_OPTIONS]
+
+
+def areas_differ(question: str, options: list[dict], results: list[dict]) -> bool:
+    """Whether the folders in `options` answer `question` differently, judged by the model from each folder's
+    best passages. Asking is the safe side: if the model can't be reached or replies unclearly, it's True."""
+    global _bedrock
+    blocks = []
+    for option in options:
+        passages = [r for r in results
+                    if r.get("knowledge_base") == option["knowledge_base"] and folder_of(_uri(r)) in option["folders"]]
+        texts = [" ".join(((p.get("content") or {}).get("text") or "").split())[:COMPARE_CHARS]
+                 for p in passages[:COMPARE_PASSAGES]]
+        blocks.append(f"Area: {option['label']}\n" + "\n---\n".join(texts))
+    prompt = COMPARE_PROMPT.format(question=question, areas="\n\n".join(blocks))
+    try:
+        if _bedrock is None:
+            _bedrock = boto3.client("bedrock-runtime")
+        response = _bedrock.converse(
+            modelId=BEDROCK_MODEL_ID,
+            messages=[{"role": "user", "content": [{"text": prompt}]}],
+            inferenceConfig={"temperature": 0.0, "maxTokens": 2000},
+        )
+        reply = " ".join(b["text"] for b in response["output"]["message"]["content"] if "text" in b).upper()
+    except Exception:
+        logger.exception("Could not compare the areas; asking the user instead")
+        return True
+    if "COMPLEMENTARY" in reply and "DIFFERENT" not in reply:
+        return False
+    if "DIFFERENT" not in reply:
+        logger.warning("Unclear area comparison reply %s; asking the user", json.dumps(reply[:200]))
+    return True
 
 
 def parse_context(raw) -> dict | None:
