@@ -5,6 +5,7 @@ from strands.agent.conversation_manager.null_conversation_manager import NullCon
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from model.load import load_model
 from mcp_client.client import GatewayAuth, get_gateway_mcp_client
+from mcp_client.contexts import context_options, folder_label, parse_context
 from mcp_client.knowledge_search import KnowledgeSearch, format_passages
 from memory.session import get_memory_session_manager
 from sources.presign import presign_sources, select_sources
@@ -41,6 +42,7 @@ NO_ACCESS_ANSWER = "You don't have access to any knowledge base, so I can't answ
 NOT_FOUND_ANSWER = "I couldn't find any information about this in the knowledge base."
 NO_SOURCE_ANSWER = ("My previous answer wasn't based on any document: the knowledge base didn't have "
                     "information on that question.")
+CLARIFY_QUESTION = "I found information on this in more than one area. Which one is your question about?"
 # The model starts its reply with this when the passages don't answer the question; it is removed
 # before anything reaches the caller.
 NOT_AVAILABLE_MARKER = "[NOT_AVAILABLE]"
@@ -166,6 +168,18 @@ def _final(answer: str, sources: list, answer_status: str) -> dict:
     return {"type": "final", "answer": answer, "answer_status": answer_status, "sources": sources}
 
 
+def _clarify(options: list[dict]) -> dict:
+    """Final event asking which area the question is about. The caller asks the same question again
+    with the chosen option's {knowledge_base, folders} as "context"."""
+    return {"type": "final", "answer": CLARIFY_QUESTION, "answer_status": "clarify", "sources": [],
+            "options": options}
+
+
+def _context_label(context: dict, with_knowledge_base: bool) -> str:
+    label = " / ".join(folder_label(f) for f in context["folders"])
+    return f"{label} ({_knowledge_base_label(context['knowledge_base'])})" if with_knowledge_base else label
+
+
 def _strip_marker(text: str) -> str:
     return text.replace(NOT_AVAILABLE_MARKER, "").lstrip(" :-\n")
 
@@ -278,18 +292,38 @@ async def invoke(payload, context):
         yield _final(answer, sources, status)
         return
 
+    # The area the user picked after a clarifying question; ignored for a knowledge base they can't use
+    context = parse_context(payload.get("context")) if isinstance(payload, dict) else None
+    if context and context["knowledge_base"] not in search.knowledge_bases:
+        context = None
+
     query = _retrieval_query(agent.messages, prompt)
-    results = await search.search(query) if query else []
-    log.info("Retrieved %d passage(s) from %s", len(results), search.knowledge_bases)
+    results = await search.search(query, context) if query else []
+    log.info("Retrieved %d passage(s) from %s (context: %s)", len(results), search.knowledge_bases, context)
     yield {"type": "retrieval", "knowledge_bases": search.knowledge_bases, "passages": len(results)}
     if not results:
         _remember_answer(agent, "not_available", [])
         yield _final(NOT_FOUND_ANSWER, [], "not_available")
         return
 
+    # Good matches in more than one folder: ask which area is meant instead of answering. Nothing is
+    # added to memory, so the same question comes back with the chosen context.
+    if not context:
+        options = context_options(results)
+        if len(options) > 1:
+            several_kbs = len({o["knowledge_base"] for o in options}) > 1
+            for option in options:
+                option["label"] = _context_label(option, several_kbs)
+            log.info("Asking which context is meant: %s", [o["label"] for o in options])
+            yield {"event": {"contentBlockDelta": {"delta": {"text": CLARIFY_QUESTION}}}}
+            yield _clarify(options)
+            return
+
     # Answer from the retrieved passages only. They go in the system prompt for this turn,
     # so conversation memory keeps just the question and the answer.
-    agent.system_prompt = (f"{DEFAULT_SYSTEM_PROMPT}{_previous_answer_note(last)}\n"
+    context_note = (f"\nThe user has said this question is about: {_context_label(context, True)}.\n"
+                    if context else "")
+    agent.system_prompt = (f"{DEFAULT_SYSTEM_PROMPT}{_previous_answer_note(last)}{context_note}\n"
                            f"Knowledge base passages:\n\n{format_passages(results)}")
     answer = ""
     not_available = False

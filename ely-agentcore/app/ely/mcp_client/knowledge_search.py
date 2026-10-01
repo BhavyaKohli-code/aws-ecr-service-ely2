@@ -5,12 +5,16 @@ import uuid
 
 from strands.tools.mcp.mcp_client import MCPClient
 
+from mcp_client.contexts import folder_of
 from sources.presign import iter_kb_results
 
 logger = logging.getLogger(__name__)
 
 # Passages given to the model after merging all knowledge bases, best score first
 MAX_SEARCH_RESULTS = int(os.getenv("MAX_SEARCH_RESULTS", "8"))
+# Passages fetched from a knowledge base when the search is narrowed to some of its folders; the
+# retrieval tool can't filter by folder, so it fetches its maximum and the folder is picked here
+CONTEXT_SEARCH_RESULTS = 25
 
 
 def knowledge_base_name(tool_name: str) -> str:
@@ -37,20 +41,31 @@ class KnowledgeSearch:
     def knowledge_bases(self) -> list[str]:
         return [knowledge_base_name(n) for n in self.tool_names]
 
-    async def search(self, query: str) -> list[dict]:
-        """Return the top results across all accessible knowledge bases, each labelled with its knowledge base."""
+    async def search(self, query: str, context: dict | None = None) -> list[dict]:
+        """Return the top results across all accessible knowledge bases, each labelled with its knowledge base.
+
+        With a context ({knowledge_base, folders}) only that knowledge base is searched, and only passages
+        from those folders are kept. A knowledge base the user may not use is never searched.
+        """
+        names, arguments = self.tool_names, {"query": query}
+        if context:
+            names = [n for n in self.tool_names if knowledge_base_name(n) == context["knowledge_base"]]
+            arguments["number_of_results"] = CONTEXT_SEARCH_RESULTS
         outcomes = await asyncio.gather(
-            *(self._client.call_tool_async(f"kb-{uuid.uuid4().hex[:12]}", name, {"query": query})
-              for name in self.tool_names),
+            *(self._client.call_tool_async(f"kb-{uuid.uuid4().hex[:12]}", name, arguments)
+              for name in names),
             return_exceptions=True,
         )
         results, failed = [], []
-        for name, outcome in zip(self.tool_names, outcomes):
+        for name, outcome in zip(names, outcomes):
             if isinstance(outcome, BaseException) or outcome.get("status") == "error":
                 logger.warning("Search on %s failed: %s", name, outcome)
                 failed.append(name)
                 continue
             for result in iter_kb_results(outcome):
+                uri = ((result.get("location") or {}).get("s3Location") or {}).get("uri") or ""
+                if context and folder_of(uri) not in context["folders"]:
+                    continue
                 results.append({**result, "knowledge_base": knowledge_base_name(name)})
         if failed and not results:
             raise RuntimeError(f"Knowledge base search failed: {', '.join(failed)}")
