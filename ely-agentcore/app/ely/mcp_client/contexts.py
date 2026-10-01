@@ -12,7 +12,7 @@ from pathlib import PurePosixPath
 CLARIFY_MIN_SCORE = float(os.getenv("CLARIFY_MIN_SCORE", "0.5"))
 # ...and only if the folder's best match is this close to the best match overall. Hierarchical chunking
 # scores most passages well above 0.5, so without this almost every question would be asked back.
-CLARIFY_MARGIN = float(os.getenv("CLARIFY_MARGIN", "0.05"))
+CLARIFY_MARGIN = float(os.getenv("CLARIFY_MARGIN", "0.10"))
 # At most this many choices are offered, best match first
 MAX_CONTEXT_OPTIONS = int(os.getenv("MAX_CONTEXT_OPTIONS", "4"))
 

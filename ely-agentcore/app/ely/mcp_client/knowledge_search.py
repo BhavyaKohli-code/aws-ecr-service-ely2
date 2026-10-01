@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 
 # Passages given to the model after merging all knowledge bases, best score first
 MAX_SEARCH_RESULTS = int(os.getenv("MAX_SEARCH_RESULTS", "8"))
+# Passages fetched from each knowledge base. More than the model gets, so the choice of which folders
+# to offer sees past the near-identical channel copies (agency/axis/dsf) that fill the top few
+SEARCH_RESULTS_PER_KB = int(os.getenv("SEARCH_RESULTS_PER_KB", "12"))
 # Passages fetched from a knowledge base when the search is narrowed to some of its folders; the
 # retrieval tool can't filter by folder, so it fetches its maximum and the folder is picked here
 CONTEXT_SEARCH_RESULTS = 25
@@ -42,12 +45,13 @@ class KnowledgeSearch:
         return [knowledge_base_name(n) for n in self.tool_names]
 
     async def search(self, query: str, context: dict | None = None) -> list[dict]:
-        """Return the top results across all accessible knowledge bases, each labelled with its knowledge base.
+        """Return the results across all accessible knowledge bases, best first, each labelled with its
+        knowledge base. The caller gives the model only the first MAX_SEARCH_RESULTS.
 
         With a context ({knowledge_base, folders}) only that knowledge base is searched, and only passages
         from those folders are kept. A knowledge base the user may not use is never searched.
         """
-        names, arguments = self.tool_names, {"query": query}
+        names, arguments = self.tool_names, {"query": query, "number_of_results": SEARCH_RESULTS_PER_KB}
         if context:
             names = [n for n in self.tool_names if knowledge_base_name(n) == context["knowledge_base"]]
             arguments["number_of_results"] = CONTEXT_SEARCH_RESULTS
@@ -70,7 +74,7 @@ class KnowledgeSearch:
         if failed and not results:
             raise RuntimeError(f"Knowledge base search failed: {', '.join(failed)}")
         results.sort(key=lambda r: r.get("score") or 0.0, reverse=True)
-        return results[:MAX_SEARCH_RESULTS]
+        return results
 
 
 def format_passages(results: list[dict]) -> str:

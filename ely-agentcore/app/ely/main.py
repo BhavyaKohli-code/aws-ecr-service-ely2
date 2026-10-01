@@ -6,7 +6,7 @@ from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from model.load import load_model
 from mcp_client.client import GatewayAuth, get_gateway_mcp_client
 from mcp_client.contexts import context_options, folder_label, parse_context
-from mcp_client.knowledge_search import KnowledgeSearch, format_passages
+from mcp_client.knowledge_search import MAX_SEARCH_RESULTS, KnowledgeSearch, format_passages
 from memory.session import get_memory_session_manager
 from sources.presign import presign_sources, select_sources
 
@@ -318,6 +318,8 @@ async def invoke(payload, context):
             yield {"event": {"contentBlockDelta": {"delta": {"text": CLARIFY_QUESTION}}}}
             yield _clarify(options)
             return
+    # All results decide the choices above; the model reads only the best few
+    results = results[:MAX_SEARCH_RESULTS]
 
     # Answer from the retrieved passages only. They go in the system prompt for this turn,
     # so conversation memory keeps just the question and the answer.
