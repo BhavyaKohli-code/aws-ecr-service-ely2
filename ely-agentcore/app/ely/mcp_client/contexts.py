@@ -2,19 +2,14 @@
 
 Documents live at s3://<bucket>/DMS_copilot/<HR|Sales>/<folder>/..., and the top-level folder (uw, dcc,
 wpc, payroll, ...) is what tells apart answers that match equally well. When good matches come from more
-than one folder and the model judges that the question means different things in them, ELY asks the user to
-pick one before answering, then searches only that folder. Folders whose passages can be combined into one
-answer are answered from together.
+than one folder, the answering model is told which passages come from which folder; if they answer the
+question differently it asks the user to pick one (the folders become choices), and that folder alone is
+searched for the same question. Folders whose passages can be combined into one answer are answered from
+together.
 """
-import json
-import logging
 import os
 import re
 from pathlib import PurePosixPath
-
-import boto3
-
-logger = logging.getLogger(__name__)
 
 # A match at or above this score counts towards a folder being offered as a choice
 CLARIFY_MIN_SCORE = float(os.getenv("CLARIFY_MIN_SCORE", "0.5"))
@@ -23,36 +18,6 @@ CLARIFY_MIN_SCORE = float(os.getenv("CLARIFY_MIN_SCORE", "0.5"))
 CLARIFY_MARGIN = float(os.getenv("CLARIFY_MARGIN", "0.10"))
 # At most this many choices are offered, best match first
 MAX_CONTEXT_OPTIONS = int(os.getenv("MAX_CONTEXT_OPTIONS", "4"))
-# Passages per folder, and characters per passage, shown to the model when it judges whether the folders differ
-COMPARE_PASSAGES = 2
-COMPARE_CHARS = 1500
-# A fast model is enough to compare a few passages; this keeps the extra step under a second
-COMPARE_MODEL_ID = os.getenv("COMPARE_MODEL_ID", "in.anthropic.claude-haiku-4-5-20251001-v1:0")
-
-COMPARE_PROMPT = """You decide whether an assistant must ask the user which area their question is about.
-
-Question: {question}
-
-Passages found in each area:
-
-{areas}
-
-First check whether the passages of each area actually answer the question, not just share some words with
-it. If no area answers it, reply NONE: asking the user to pick an area would only lead to "not available".
-
-Otherwise the default is COMPLEMENTARY: one good answer can combine what the areas say. That includes areas
-that repeat each other, add detail to each other, or give different values for different cases (for
-example a limit per channel, product or age band), because one answer can simply list each case. It also
-includes the case where only one area actually answers the question and the others are unrelated.
-
-Answer DIFFERENT only if at least two areas each actually answer the question, but the question means
-different things in them, so a combined answer would mix unrelated subjects and the user must say which one
-they mean. Example: "What are the incentives?" when one area is about employee incentive plans and another
-about sales commission for advisors.
-
-Reply with exactly one word, NONE, COMPLEMENTARY or DIFFERENT, inside <verdict></verdict> tags."""
-
-_bedrock = None
 
 # Display names for folders; any other folder is shown as its name with underscores as spaces
 FOLDER_LABELS = {
@@ -129,39 +94,11 @@ def context_options(results: list[dict]) -> list[dict]:
     return options[:MAX_CONTEXT_OPTIONS]
 
 
-def areas_differ(question: str, options: list[dict], results: list[dict]) -> bool:
-    """Whether `question` means different things in the folders in `options`, judged by the model from each
-    folder's best passages. Choices are offered only on a clear DIFFERENT: if no folder answers the question,
-    or the model can't be reached or replies unclearly, the question is answered from all of them."""
-    global _bedrock
-    blocks = []
-    for option in options:
-        passages = [r for r in results
-                    if r.get("knowledge_base") == option["knowledge_base"] and folder_of(_uri(r)) in option["folders"]]
-        texts = [" ".join(((p.get("content") or {}).get("text") or "").split())[:COMPARE_CHARS]
-                 for p in passages[:COMPARE_PASSAGES]]
-        blocks.append(f"Area: {option['label']}\n" + "\n---\n".join(texts))
-    prompt = COMPARE_PROMPT.format(question=question, areas="\n\n".join(blocks))
-    try:
-        if _bedrock is None:
-            _bedrock = boto3.client("bedrock-runtime")
-        response = _bedrock.converse(
-            modelId=COMPARE_MODEL_ID,
-            # The reply is started with the opening tag and stops at the closing one, so the model gives only
-            # the verdict instead of an explanation that runs into maxTokens (Bedrock rejects "\n" as a stop)
-            messages=[{"role": "user", "content": [{"text": prompt}]},
-                      {"role": "assistant", "content": [{"text": "<verdict>"}]}],
-            inferenceConfig={"temperature": 0.0, "maxTokens": 20, "stopSequences": ["</verdict>"]},
-        )
-        reply = " ".join(b["text"] for b in response["output"]["message"]["content"] if "text" in b).upper()
-    except Exception:
-        logger.exception("Could not compare the areas; answering from all of them")
-        return False
-    # The verdict is the first word
-    verdict = re.sub(r"[^A-Z]", " ", reply).split()[:1]
-    if verdict not in (["NONE"], ["COMPLEMENTARY"], ["DIFFERENT"]):
-        logger.warning("Unclear area comparison reply %s; answering from all areas", json.dumps(reply[:200]))
-    return verdict == ["DIFFERENT"]
+def passages_by_area(options: list[dict], results: list[dict]) -> list[list[int]]:
+    """For each option, the 1-based numbers of the passages in `results` that come from its folders."""
+    return [[i for i, r in enumerate(results, start=1)
+             if r.get("knowledge_base") == option["knowledge_base"] and folder_of(_uri(r)) in option["folders"]]
+            for option in options]
 
 
 def parse_context(raw) -> dict | None:

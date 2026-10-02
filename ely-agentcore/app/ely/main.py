@@ -1,15 +1,17 @@
 import asyncio
 import re
 from typing import Any
+import boto3
 from strands import Agent
 from strands.agent.conversation_manager.null_conversation_manager import NullConversationManager
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
-from model.load import load_model
+from model.load import BEDROCK_MODEL_ID, accepts_temperature, load_model
 from mcp_client.client import GatewayAuth, get_gateway_mcp_client
-from mcp_client.contexts import areas_differ, context_options, folder_label, parse_context
+from mcp_client.contexts import context_options, folder_label, parse_context, passages_by_area
 from mcp_client.follow_up import search_queries
-from mcp_client.knowledge_search import MAX_SEARCH_RESULTS, KnowledgeSearch, format_passages
+from mcp_client.knowledge_search import MAX_SEARCH_RESULTS, SECOND_LOOK_RESULTS, KnowledgeSearch, format_passages
 from memory.session import get_memory_session_manager
+from model.reply import ASK_AREA_MARKER, MARKERS, NOT_AVAILABLE_MARKER, ReplyFilter
 from sources.presign import presign_sources, select_sources
 
 app = BedrockAgentCoreApp()
@@ -54,9 +56,20 @@ NOT_FOUND_ANSWER = "I couldn't find any information about this in the knowledge 
 NO_SOURCE_ANSWER = ("My previous answer wasn't based on any document: the knowledge base didn't have "
                     "information on that question.")
 CLARIFY_QUESTION = "I found information on this in more than one area. Which one is your question about?"
-# The model starts its reply with this when the passages don't answer the question; it is removed
-# before anything reaches the caller.
-NOT_AVAILABLE_MARKER = "[NOT_AVAILABLE]"
+# Added to the system prompt when the passages come from more than one area (folder). The model replies
+# ASK_AREA_MARKER alone when they answer differently, and the areas are offered as choices.
+AREA_RULE = """
+The passages come from different areas of the knowledge base:
+{areas}
+If at least two of these areas each answer the question but say different things for it (different rules,
+values, limits, processes, documents or products, so the right answer depends on which area the user means:
+for example a different entry age or minimum premium per product or channel, a different process in one
+channel than another, or employee incentive plans in one area and advisor sales commission in another),
+don't answer: reply with only [ASK_AREA], and the user will be asked to pick an area. If the areas agree, add
+detail to one and the same answer, or only one of them answers the question, answer normally.
+"""
+# The model starts its reply with NOT_AVAILABLE_MARKER when the passages don't answer the question; markers
+# are removed before anything reaches the caller (see model/reply.py).
 # The model ends its reply with this line naming the passages it used; it is removed before anything
 # reaches the caller and decides which documents are returned as sources.
 USED_PASSAGES = re.compile(r"\s*USED_PASSAGES:\s*([^\n]*)\s*$", re.I)
@@ -72,6 +85,8 @@ _WHERE_FROM = re.compile(r"\bwhere (did|do) you (get|find|take|read|see)\b", re.
 # Answers are kept in session state under this key: {"status": ..., "sources": [...]}
 LAST_ANSWER_KEY = "ely_last_answer"
 KNOWLEDGE_BASE_LABELS = {"hr-knowledge-retrieval": "HR", "sales-knowledge-retrieval": "Sales"}
+
+_bedrock = None
 
 
 def _make_conversation_manager():
@@ -192,7 +207,37 @@ def _context_label(context: dict, with_knowledge_base: bool) -> str:
 
 
 def _strip_marker(text: str) -> str:
-    return text.replace(NOT_AVAILABLE_MARKER, "").lstrip(" :-\n")
+    for marker in MARKERS:
+        text = text.replace(marker, "")
+    return text.lstrip(" :-\n").rstrip()
+
+
+def _areas(results: list[dict]) -> tuple[list[dict], str]:
+    """The areas (folders) with good matches among the passages the model reads, as choices, and the system
+    prompt note naming each area's passages; none when the matches come from a single area."""
+    options = context_options(results)
+    numbers = passages_by_area(options, results)
+    options = [o for o, n in zip(options, numbers) if n]
+    numbers = [n for n in numbers if n]
+    if len(options) < 2:
+        return [], ""
+    several_kbs = len({o["knowledge_base"] for o in options}) > 1
+    for option in options:
+        option["label"] = _context_label(option, several_kbs)
+    areas = "\n".join(f"- {o['label']}: passages {', '.join(map(str, n))}" for o, n in zip(options, numbers))
+    return options, AREA_RULE.format(areas=areas) + "\n"
+
+
+def _replace_reply(agent, text: str) -> None:
+    """Replace the reply just saved, in the agent and in memory, with what the caller was given."""
+    message = {"role": "assistant", "content": [{"text": text}]}
+    agent.messages[-1] = message
+    session_manager = getattr(agent, "_session_manager", None)
+    if session_manager:
+        try:
+            session_manager.redact_latest_message(message, agent)
+        except Exception:
+            log.exception("Could not replace the saved reply in memory")
 
 
 def _split_used_passages(text: str, count: int) -> tuple[str, list[int] | None]:
@@ -265,6 +310,26 @@ def _drop_reasoning(messages: list) -> None:
             message["content"] = kept or [{"text": "(no answer)"}]  # Bedrock rejects empty messages
 
 
+def _second_look(messages: list, system_prompt: str) -> str:
+    """The answering model's reply to the same conversation from other passages; "" if it can't be reached.
+    Called directly rather than through the agent, so the question isn't added to memory a second time."""
+    global _bedrock
+    # Only the text of each message: memory adds fields (tracking_id) that Bedrock rejects
+    messages = [{"role": m["role"],
+                 "content": [{"text": b["text"]} for b in m.get("content", []) if isinstance(b, dict) and b.get("text")]
+                 or [{"text": "(no answer)"}]} for m in messages]
+    try:
+        if _bedrock is None:
+            _bedrock = boto3.client("bedrock-runtime")
+        settings = {"temperature": 0.0} if accepts_temperature(BEDROCK_MODEL_ID) else {}
+        response = _bedrock.converse(modelId=BEDROCK_MODEL_ID, system=[{"text": system_prompt}], messages=messages,
+                                     inferenceConfig={"maxTokens": 4096, **settings})
+        return "\n".join(b["text"] for b in response["output"]["message"]["content"] if "text" in b)
+    except Exception:
+        log.exception("Second look failed; keeping the first reply")
+        return ""
+
+
 def _get_authorization(context) -> str | None:
     """The caller's Cognito token, forwarded by Runtime via requestHeaderAllowlist."""
     headers = getattr(context, "request_headers", None) or {}
@@ -311,7 +376,7 @@ async def invoke(payload, context):
     # Search for the question on its own, as asked and rewritten in English the way the documents word it;
     # a follow-up gets the subject it refers to from the previous question
     current, previous = _question_and_previous(agent.messages, prompt)
-    query, queries = await asyncio.to_thread(search_queries, previous, current) if current else ("", [])
+    _, queries = await asyncio.to_thread(search_queries, previous, current) if current else ("", [])
     results = await search.search(queries, context) if queries else []
     log.info("Retrieved %d passage(s) from %s for %s (context: %s)", len(results), search.knowledge_bases, queries, context)
     yield {"type": "retrieval", "knowledge_bases": search.knowledge_bases, "passages": len(results)}
@@ -320,23 +385,14 @@ async def invoke(payload, context):
         yield _final(NOT_FOUND_ANSWER, [], "not_available")
         return
 
-    # Good matches in more than one folder that answer the question differently: ask which area is meant
-    # instead of answering. Folders that agree or add to each other are answered from together. Nothing is
-    # added to memory, so the same question comes back with the chosen context.
-    if not context:
-        options = context_options(results)
-        if len(options) > 1:
-            several_kbs = len({o["knowledge_base"] for o in options}) > 1
-            for option in options:
-                option["label"] = _context_label(option, several_kbs)
-            differ = await asyncio.to_thread(areas_differ, query, options, results)
-            log.info("Areas %s answer %s", [o["label"] for o in options], "differently" if differ else "alike")
-            if differ:
-                yield {"event": {"contentBlockDelta": {"delta": {"text": CLARIFY_QUESTION}}}}
-                yield _clarify(options)
-                return
-    # All results decide the choices above; the model reads only the best few
+    # The model reads only the best few; the next ones get a second look if those don't answer the question
+    more = results[MAX_SEARCH_RESULTS:MAX_SEARCH_RESULTS + SECOND_LOOK_RESULTS]
     results = results[:MAX_SEARCH_RESULTS]
+
+    # Good matches from more than one folder: the model is told which passages come from which, and replies
+    # [ASK_AREA] instead of answering when they answer the question differently. The folders are then offered
+    # as choices, and the same question comes back with the chosen one as its context.
+    options, area_note = ([], "") if context else _areas(results)
 
     # Answer from the retrieved passages only. They go in the system prompt for this turn,
     # so conversation memory keeps just the question and the answer.
@@ -345,18 +401,14 @@ async def invoke(payload, context):
     access_note = ("\nKnowledge bases this user can search: "
                    f"{', '.join(_knowledge_base_label(k) for k in search.knowledge_bases)} "
                    f"(the company has: {', '.join(KNOWLEDGE_BASE_LABELS.values())}).\n")
-    agent.system_prompt = (f"{DEFAULT_SYSTEM_PROMPT}{access_note}{_previous_answer_note(last)}{context_note}\n"
-                           f"Knowledge base passages:\n\n{format_passages(results)}")
-    answer = ""
-    not_available = False
-    used = None
+    instructions = f"{DEFAULT_SYSTEM_PROMPT}{access_note}{_previous_answer_note(last)}{context_note}\n"
+    agent.system_prompt = f"{instructions}{area_note}Knowledge base passages:\n\n{format_passages(results)}"
+    reply = ReplyFilter()
     _drop_reasoning(agent.messages)
 
     async for event in agent.stream_async(
         prompt,
     ):
-        if isinstance(event, dict) and "result" in event:
-            answer = str(event["result"]).strip()
         if not isinstance(event, dict) or "event" not in event:
             continue
         cbs = event["event"].get("contentBlockStart")
@@ -365,27 +417,55 @@ async def invoke(payload, context):
         delta = event["event"].get("contentBlockDelta", {}).get("delta", {})
         if "reasoningContent" in delta:  # the model's private reasoning is never sent to the caller
             continue
-        # The model is non-streaming (see model/load.py), so its whole reply arrives in one text delta.
-        # Stripping here also strips the stored message, so remember what was there.
-        if "USED_PASSAGES" in delta.get("text", "").upper():
-            delta["text"], used = _split_used_passages(delta["text"], len(results))
-        if NOT_AVAILABLE_MARKER in delta.get("text", ""):
-            not_available = True
-            delta["text"] = _strip_marker(delta["text"])
+        if "text" in delta:
+            # Passed on as it arrives, except a reply starting with a marker and the USED_PASSAGES line. Strands
+            # saves the piece as changed here, so memory keeps what the caller saw.
+            shown, delta["text"] = reply.feed(delta["text"])
+            if not shown:
+                continue
         yield event
+
+    if reply.marker == ASK_AREA_MARKER and options:
+        log.info("Areas %s answer differently: asking which one is meant", [o["label"] for o in options])
+        _replace_reply(agent, CLARIFY_QUESTION)
+        yield {"event": {"contentBlockDelta": {"delta": {"text": CLARIFY_QUESTION}}}}
+        yield _clarify(options)
+        return
+
+    if reply.marker:
+        # Not answered from these passages, so nothing was shown yet. Search ranks the passage that answers a
+        # question anywhere in the first ~25 (often 15th-25th), but the model reads only the best few: rather
+        # than send it every passage on every question, it gets one more look, at the next passages, only now.
+        answer, used = _split_used_passages(reply.rest(), len(results))
+        if more and not used:
+            second, second_used = _split_used_passages(await asyncio.to_thread(
+                _second_look, agent.messages[:-1], f"{instructions}Knowledge base passages:\n\n{format_passages(more)}"),
+                len(more))
+            log.info("Second look at %d more passage(s) %s", len(more),
+                     "answered the question" if second_used else "didn't answer the question either")
+            if second_used:
+                results, answer, used = more, second, second_used
+        answer = _strip_marker(answer) or NOT_FOUND_ANSWER
+        _replace_reply(agent, answer)  # memory saved the reply as the model wrote it
+        yield {"event": {"contentBlockDelta": {"delta": {"text": answer}}}}
+        # Passages used means the question was (at least partly) answered, even though the model marked it
+        not_available = not used
+    else:
+        answer, used = _split_used_passages(reply.shown + reply.rest(), len(results))
+        if used is None and reply.rest():
+            # No USED_PASSAGES line: the reply's last line was held back in case it was that line
+            yield {"event": {"contentBlockDelta": {"delta": {"text": reply.rest()}}}}
+            _replace_reply(agent, answer)
+        # The model is told to start with the marker, but may put it later
+        not_available = NOT_AVAILABLE_MARKER in answer and not used
+        answer = _strip_marker(answer)
 
     # Final structured event: the answer plus the documents it was built from,
     # each with short-lived pre-signed links. No sources when the passages didn't answer it.
-    answer, used_in_result = _split_used_passages(answer, len(results))
-    used = used if used is not None else used_in_result
-    # Passages used means the question was (at least partly) answered, even if the model also marked
-    # part of it as not available; the marker alone decides only when no passage was used.
-    not_available = (not_available or NOT_AVAILABLE_MARKER in answer) and not used
-    answer = _strip_marker(answer)
     if not_available:
         log.info("Knowledge base does not cover the question")
         _remember_answer(agent, "not_available", [])
-        yield _final(_strip_marker(answer), [], "not_available")
+        yield _final(answer, [], "not_available")
         return
     if used == []:
         # Answered without any passage, e.g. "is that from HR or Sales?" answered from the previous-answer

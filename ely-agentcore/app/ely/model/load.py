@@ -12,7 +12,7 @@ def accepts_temperature(model_id: str) -> bool:
 
 def load_model() -> BedrockModel:
     """Get Bedrock model client using IAM credentials."""
-    # streaming=False: the whole reply arrives as one text delta, which main.py relies on to remove the
-    # trailing USED_PASSAGES line before it reaches the caller. The agent still streams events to the caller.
+    # Streamed, so the caller sees the answer as it is written; main.py holds back the markers and the
+    # trailing USED_PASSAGES line (see model/reply.py).
     settings = {"temperature": 0.0} if accepts_temperature(BEDROCK_MODEL_ID) else {}
-    return BedrockModel(model_id=BEDROCK_MODEL_ID, streaming=False, **settings)
+    return BedrockModel(model_id=BEDROCK_MODEL_ID, streaming=True, **settings)

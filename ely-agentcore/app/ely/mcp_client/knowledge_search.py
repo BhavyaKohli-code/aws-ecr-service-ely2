@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 import uuid
 
 from strands.tools.mcp.mcp_client import MCPClient
@@ -13,6 +14,10 @@ logger = logging.getLogger(__name__)
 # Passages given to the model after merging all knowledge bases and search texts, best score first. Each
 # question is searched several ways (see follow_up.py), so more distinct passages compete for these places
 MAX_SEARCH_RESULTS = int(os.getenv("MAX_SEARCH_RESULTS", "12"))
+# Passages after those, given to the model in a second look only when the first ones don't answer
+SECOND_LOOK_RESULTS = int(os.getenv("SECOND_LOOK_RESULTS", "18"))
+# A passage is a repeat when this share of its 5-word sequences is in a better-ranked passage
+REPEAT_OVERLAP = 0.8
 # Passages fetched from each knowledge base. More than the model gets, so the choice of which folders
 # to offer sees past the near-identical channel copies (agency/axis/dsf) that fill the top few
 SEARCH_RESULTS_PER_KB = int(os.getenv("SEARCH_RESULTS_PER_KB", "12"))
@@ -81,7 +86,26 @@ class KnowledgeSearch:
                     best[key] = {**result, "knowledge_base": knowledge_base_name(name)}
         if failed and not best:
             raise RuntimeError(f"Knowledge base search failed: {', '.join(dict.fromkeys(failed))}")
-        return sorted(best.values(), key=lambda r: r.get("score") or 0.0, reverse=True)
+        return drop_repeats(sorted(best.values(), key=lambda r: r.get("score") or 0.0, reverse=True))
+
+
+def _shingles(text: str, size: int = 5) -> set[str]:
+    words = re.findall(r"\w+", text.lower())
+    return {" ".join(words[i:i + size]) for i in range(max(1, len(words) - size + 1))}
+
+
+def drop_repeats(results: list[dict]) -> list[dict]:
+    """Results without passages that repeat a better one: the same file is kept in more than one folder and
+    knowledge base (Business Insurance in HR and Sales, the commission FAQ in HR payroll and Sales DCC), and
+    a copy would take a place among the passages the model reads and show up as a second area to choose."""
+    kept, seen = [], []
+    for result in results:
+        words = _shingles((result.get("content") or {}).get("text") or "")
+        if any(len(words & other) >= REPEAT_OVERLAP * min(len(words), len(other)) for other in seen):
+            continue
+        kept.append(result)
+        seen.append(words)
+    return kept
 
 
 def format_passages(results: list[dict]) -> str:

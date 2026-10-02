@@ -36,10 +36,12 @@ Step 1. Decide whether the latest question is NEW or a FOLLOW_UP.
   "aur premium payment term?". Keep the previous question's subject (product name, case) and apply the
   latest question's change to it.
 
-Step 2. Write the question in English: translate Hindi or Hinglish, spell out abbreviations after the short
-form (for example "PEP (Politically Exposed Person)"), and use the words the company's documents would use,
-such as policy, proposer, owner, life assured, premium, underwriting, eligibility. Keep product names, codes
-and numbers as written.
+Step 2. Write the question in English: translate Hindi or Hinglish, spell out the abbreviations listed below
+after the short form (for example "PEP (Politically Exposed Person)"), and use the words the company's
+documents would use, such as policy, proposer, owner, life assured, premium, underwriting, eligibility. Keep
+product names, codes and numbers as written. Spell out only abbreviations from this list; keep any other
+abbreviation exactly as written and never guess what it stands for.
+{glossary}
 
 Step 3. Write two more search phrases for the same question, worded the way the company's documents (product
 brochures, underwriting guidelines, sales training, FAQs, HR policies) would state the answer, e.g. a section
@@ -53,6 +55,19 @@ FOLLOW_UP
 What is the entry age for SWAG in the agency channel?
 SWAG eligibility: minimum and maximum entry age, agency channel
 Smart Wealth Advantage Guarantee plan age at entry for agency"""
+
+# The company's own abbreviations. Without them the model guessed wrong ("PL requests" became "Personal Loan
+# requests" instead of Privilege Leave) and the search found nothing about leave.
+GLOSSARY = """- HR: PL = Privilege Leave, CL = Casual Leave, SL = Sick Leave, LOP = Loss of Pay, LWP = Leave Without Pay,
+  HRBP = HR Business Partner, LWD = Last Working Day, F&F = Full and Final settlement
+- Underwriting and compliance: PEP = Politically Exposed Person, EDD = Enhanced Due Diligence, AFYP = Annualised
+  First Year Premium, TSAR = Total Sum At Risk, NRI = Non-Resident Indian, KYC = Know Your Customer,
+  AML = Anti-Money Laundering, NTU = Not Taken Up, ULIP = Unit Linked Insurance Plan, Par = Participating
+- Products: OSP = Online Savings Plan, OSPP = Online Savings Plan Plus, FTS = Fast Track Super Plan,
+  FWAP = Flexi Wealth Advantage Plan, PWP = Platinum Wealth Plan, SPS = Shiksha Plus Super, SRP = Smart RISE,
+  STAR ULIP = Smart Term with Additional Returns ULIP, STEP = Smart Total Elite Protection, STPP = Smart Term
+  Plan Plus, SWAG = Smart Wealth Advantage Guarantee Plan, SWAG Pension = Smart Wealth Annuity Guaranteed
+  Pension Plan, SWAG-Par = Smart Wealth Advantage Growth Par Plan"""
 
 # The rewritten question and at most this many phrases are searched, besides the question as asked
 MAX_PHRASES = 2
@@ -70,7 +85,7 @@ def search_queries(previous: str, current: str) -> tuple[str, list[str]]:
     try:
         if _bedrock is None:
             _bedrock = boto3.client("bedrock-runtime")
-        prompt = REWRITE_PROMPT.format(previous=previous or "(none)", current=current)
+        prompt = REWRITE_PROMPT.format(previous=previous or "(none)", current=current, glossary=GLOSSARY)
         response = _bedrock.converse(
             modelId=REWRITE_MODEL_ID,
             messages=[{"role": "user", "content": [{"text": prompt}]}],
