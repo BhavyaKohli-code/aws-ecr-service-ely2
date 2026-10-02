@@ -85,6 +85,42 @@ _WHERE_FROM = re.compile(r"\bwhere (did|do) you (get|find|take|read|see)\b", re.
 # Answers are kept in session state under this key: {"status": ..., "sources": [...]}
 LAST_ANSWER_KEY = "ely_last_answer"
 KNOWLEDGE_BASE_LABELS = {"hr-knowledge-retrieval": "HR", "sales-knowledge-retrieval": "Sales"}
+# Added to the system prompt in a specialist chat (the caller sent "knowledge_bases"): only those are searched,
+# so a question that belongs to another knowledge base is pointed there instead of answered.
+SPECIALIST_RULE = """
+In this chat the user is talking to the {scope} specialist, which searches only the {scope} knowledge base.
+If the question belongs to another knowledge base, start your reply with [NOT_AVAILABLE] and say that the
+{scope} specialist only covers {scope} topics; {redirect}
+"""
+
+
+def _no_scope_access_answer(knowledge_bases: list[str]) -> str:
+    names = " and ".join(_knowledge_base_label(k) for k in knowledge_bases)
+    return f"You don't have access to the {names} knowledge base, so this specialist can't answer for you."
+
+
+def _specialist_note(knowledge_bases: list[str], accessible: list[str]) -> str:
+    """System prompt note for a specialist chat limited to `knowledge_bases`, pointing the user to where a
+    question for another knowledge base can be asked (only ones they may use)."""
+    scope = " and ".join(_knowledge_base_label(k) for k in knowledge_bases)
+    others = [_knowledge_base_label(k) for k in accessible if k not in knowledge_bases]
+    if others:
+        redirect = (f"suggest asking Ely or the {' or '.join(others)} specialist instead. Don't answer it from "
+                    "the passages, and don't mention passages that are not about it.")
+    else:
+        redirect = ("if it belongs to a knowledge base the user cannot search, say that it is covered by that "
+                    "knowledge base, which they don't have access to.")
+    return SPECIALIST_RULE.format(scope=scope, redirect=redirect)
+
+
+def _requested_knowledge_bases(payload) -> list[str] | None:
+    """The knowledge bases a specialist chat is limited to ("knowledge_bases" in the payload); None for Ely,
+    who searches every knowledge base the user may use."""
+    raw = payload.get("knowledge_bases") if isinstance(payload, dict) else None
+    if not isinstance(raw, list):
+        return None
+    names = [k for k in raw if isinstance(k, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", k)]
+    return list(dict.fromkeys(names)) or None
 
 _bedrock = None
 
@@ -359,6 +395,15 @@ async def invoke(payload, context):
         yield _final(NO_ACCESS_ANSWER, [], "no_access")
         return
 
+    # A specialist chat searches only its own knowledge base(s), and only those the user may use
+    requested = _requested_knowledge_bases(payload)
+    knowledge_bases = search.knowledge_bases
+    if requested is not None:
+        knowledge_bases = [k for k in search.knowledge_bases if k in requested]
+        if not knowledge_bases:
+            yield _final(_no_scope_access_answer(requested), [], "no_access")
+            return
+
     # "Which document was that from?": answer from the saved sources of the previous answer
     last = agent.state.get(LAST_ANSWER_KEY)
     if last and is_source_question(prompt):
@@ -370,16 +415,16 @@ async def invoke(payload, context):
 
     # The area the user picked after a clarifying question; ignored for a knowledge base they can't use
     context = parse_context(payload.get("context")) if isinstance(payload, dict) else None
-    if context and context["knowledge_base"] not in search.knowledge_bases:
+    if context and context["knowledge_base"] not in knowledge_bases:
         context = None
 
     # Search for the question on its own, as asked and rewritten in English the way the documents word it;
     # a follow-up gets the subject it refers to from the previous question
     current, previous = _question_and_previous(agent.messages, prompt)
     _, queries = await asyncio.to_thread(search_queries, previous, current) if current else ("", [])
-    results = await search.search(queries, context) if queries else []
-    log.info("Retrieved %d passage(s) from %s for %s (context: %s)", len(results), search.knowledge_bases, queries, context)
-    yield {"type": "retrieval", "knowledge_bases": search.knowledge_bases, "passages": len(results)}
+    results = await search.search(queries, context, knowledge_bases if requested is not None else None) if queries else []
+    log.info("Retrieved %d passage(s) from %s for %s (context: %s)", len(results), knowledge_bases, queries, context)
+    yield {"type": "retrieval", "knowledge_bases": knowledge_bases, "passages": len(results)}
     if not results:
         _remember_answer(agent, "not_available", [])
         yield _final(NOT_FOUND_ANSWER, [], "not_available")
@@ -401,7 +446,8 @@ async def invoke(payload, context):
     access_note = ("\nKnowledge bases this user can search: "
                    f"{', '.join(_knowledge_base_label(k) for k in search.knowledge_bases)} "
                    f"(the company has: {', '.join(KNOWLEDGE_BASE_LABELS.values())}).\n")
-    instructions = f"{DEFAULT_SYSTEM_PROMPT}{access_note}{_previous_answer_note(last)}{context_note}\n"
+    specialist_note = _specialist_note(knowledge_bases, search.knowledge_bases) if requested is not None else ""
+    instructions = f"{DEFAULT_SYSTEM_PROMPT}{access_note}{specialist_note}{_previous_answer_note(last)}{context_note}\n"
     agent.system_prompt = f"{instructions}{area_note}Knowledge base passages:\n\n{format_passages(results)}"
     reply = ReplyFilter()
     _drop_reasoning(agent.messages)

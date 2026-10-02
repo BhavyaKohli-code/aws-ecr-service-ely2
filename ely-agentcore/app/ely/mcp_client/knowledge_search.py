@@ -50,7 +50,8 @@ class KnowledgeSearch:
     def knowledge_bases(self) -> list[str]:
         return [knowledge_base_name(n) for n in self.tool_names]
 
-    async def search(self, queries: list[str], context: dict | None = None) -> list[dict]:
+    async def search(self, queries: list[str], context: dict | None = None,
+                     knowledge_bases: list[str] | None = None) -> list[dict]:
         """Return the results across all accessible knowledge bases, best first, each labelled with its
         knowledge base. The caller gives the model only the first MAX_SEARCH_RESULTS.
 
@@ -58,9 +59,12 @@ class KnowledgeSearch:
         is kept once, with its best score.
 
         With a context ({knowledge_base, folders}) only that knowledge base is searched, and only passages
-        from those folders are kept. A knowledge base the user may not use is never searched.
+        from those folders are kept. With knowledge_bases (a specialist chat) only those are searched. A
+        knowledge base the user may not use is never searched.
         """
         names, number_of_results = self.tool_names, SEARCH_RESULTS_PER_KB
+        if knowledge_bases is not None:
+            names = [n for n in names if knowledge_base_name(n) in knowledge_bases]
         if context:
             names = [n for n in self.tool_names if knowledge_base_name(n) == context["knowledge_base"]]
             number_of_results = CONTEXT_SEARCH_RESULTS
