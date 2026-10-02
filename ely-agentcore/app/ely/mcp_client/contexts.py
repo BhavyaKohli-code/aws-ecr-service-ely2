@@ -50,7 +50,7 @@ different things in them, so a combined answer would mix unrelated subjects and 
 they mean. Example: "What are the incentives?" when one area is about employee incentive plans and another
 about sales commission for advisors.
 
-Reply with exactly one word: NONE, COMPLEMENTARY or DIFFERENT."""
+Reply with exactly one word, NONE, COMPLEMENTARY or DIFFERENT, inside <verdict></verdict> tags."""
 
 _bedrock = None
 
@@ -147,14 +147,17 @@ def areas_differ(question: str, options: list[dict], results: list[dict]) -> boo
             _bedrock = boto3.client("bedrock-runtime")
         response = _bedrock.converse(
             modelId=COMPARE_MODEL_ID,
-            messages=[{"role": "user", "content": [{"text": prompt}]}],
-            inferenceConfig={"temperature": 0.0, "maxTokens": 20},
+            # The reply is started with the opening tag and stops at the closing one, so the model gives only
+            # the verdict instead of an explanation that runs into maxTokens (Bedrock rejects "\n" as a stop)
+            messages=[{"role": "user", "content": [{"text": prompt}]},
+                      {"role": "assistant", "content": [{"text": "<verdict>"}]}],
+            inferenceConfig={"temperature": 0.0, "maxTokens": 20, "stopSequences": ["</verdict>"]},
         )
         reply = " ".join(b["text"] for b in response["output"]["message"]["content"] if "text" in b).upper()
     except Exception:
         logger.exception("Could not compare the areas; answering from all of them")
         return False
-    # The verdict is the first word; the model sometimes explains it after
+    # The verdict is the first word
     verdict = re.sub(r"[^A-Z]", " ", reply).split()[:1]
     if verdict not in (["NONE"], ["COMPLEMENTARY"], ["DIFFERENT"]):
         logger.warning("Unclear area comparison reply %s; answering from all areas", json.dumps(reply[:200]))

@@ -10,8 +10,9 @@ from sources.presign import iter_kb_results
 
 logger = logging.getLogger(__name__)
 
-# Passages given to the model after merging all knowledge bases, best score first
-MAX_SEARCH_RESULTS = int(os.getenv("MAX_SEARCH_RESULTS", "8"))
+# Passages given to the model after merging all knowledge bases and search texts, best score first. Each
+# question is searched several ways (see follow_up.py), so more distinct passages compete for these places
+MAX_SEARCH_RESULTS = int(os.getenv("MAX_SEARCH_RESULTS", "12"))
 # Passages fetched from each knowledge base. More than the model gets, so the choice of which folders
 # to offer sees past the near-identical channel copies (agency/axis/dsf) that fill the top few
 SEARCH_RESULTS_PER_KB = int(os.getenv("SEARCH_RESULTS_PER_KB", "12"))
@@ -44,37 +45,43 @@ class KnowledgeSearch:
     def knowledge_bases(self) -> list[str]:
         return [knowledge_base_name(n) for n in self.tool_names]
 
-    async def search(self, query: str, context: dict | None = None) -> list[dict]:
+    async def search(self, queries: list[str], context: dict | None = None) -> list[dict]:
         """Return the results across all accessible knowledge bases, best first, each labelled with its
         knowledge base. The caller gives the model only the first MAX_SEARCH_RESULTS.
+
+        Every query is searched in every knowledge base, all in parallel; a passage found by several queries
+        is kept once, with its best score.
 
         With a context ({knowledge_base, folders}) only that knowledge base is searched, and only passages
         from those folders are kept. A knowledge base the user may not use is never searched.
         """
-        names, arguments = self.tool_names, {"query": query, "number_of_results": SEARCH_RESULTS_PER_KB}
+        names, number_of_results = self.tool_names, SEARCH_RESULTS_PER_KB
         if context:
             names = [n for n in self.tool_names if knowledge_base_name(n) == context["knowledge_base"]]
-            arguments["number_of_results"] = CONTEXT_SEARCH_RESULTS
+            number_of_results = CONTEXT_SEARCH_RESULTS
+        calls = [(name, query) for query in queries for name in names]
         outcomes = await asyncio.gather(
-            *(self._client.call_tool_async(f"kb-{uuid.uuid4().hex[:12]}", name, arguments)
-              for name in names),
+            *(self._client.call_tool_async(f"kb-{uuid.uuid4().hex[:12]}", name,
+                                           {"query": query, "number_of_results": number_of_results})
+              for name, query in calls),
             return_exceptions=True,
         )
-        results, failed = [], []
-        for name, outcome in zip(names, outcomes):
+        best, failed = {}, []
+        for (name, query), outcome in zip(calls, outcomes):
             if isinstance(outcome, BaseException) or outcome.get("status") == "error":
-                logger.warning("Search on %s failed: %s", name, outcome)
+                logger.warning("Search on %s for %r failed: %s", name, query, outcome)
                 failed.append(name)
                 continue
             for result in iter_kb_results(outcome):
                 uri = ((result.get("location") or {}).get("s3Location") or {}).get("uri") or ""
                 if context and folder_of(uri) not in context["folders"]:
                     continue
-                results.append({**result, "knowledge_base": knowledge_base_name(name)})
-        if failed and not results:
-            raise RuntimeError(f"Knowledge base search failed: {', '.join(failed)}")
-        results.sort(key=lambda r: r.get("score") or 0.0, reverse=True)
-        return results
+                key = (uri, (result.get("content") or {}).get("text") or "")
+                if key not in best or (result.get("score") or 0.0) > (best[key].get("score") or 0.0):
+                    best[key] = {**result, "knowledge_base": knowledge_base_name(name)}
+        if failed and not best:
+            raise RuntimeError(f"Knowledge base search failed: {', '.join(dict.fromkeys(failed))}")
+        return sorted(best.values(), key=lambda r: r.get("score") or 0.0, reverse=True)
 
 
 def format_passages(results: list[dict]) -> str:
