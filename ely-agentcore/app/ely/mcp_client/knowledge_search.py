@@ -6,6 +6,7 @@ import uuid
 
 from strands.tools.mcp.mcp_client import MCPClient
 
+from mcp_client.channels import visible_to
 from mcp_client.contexts import folder_of
 from sources.presign import iter_kb_results
 
@@ -21,8 +22,8 @@ REPEAT_OVERLAP = 0.8
 # Passages fetched from each knowledge base. More than the model gets, so the choice of which folders
 # to offer sees past the near-identical channel copies (agency/axis/dsf) that fill the top few
 SEARCH_RESULTS_PER_KB = int(os.getenv("SEARCH_RESULTS_PER_KB", "12"))
-# Passages fetched from a knowledge base when the search is narrowed to some of its folders; the
-# retrieval tool can't filter by folder, so it fetches its maximum and the folder is picked here
+# Passages fetched from a knowledge base when the search is narrowed to some of its folders or to the user's
+# channel; the retrieval tool can't filter by folder, so it fetches its maximum and the folder is picked here
 CONTEXT_SEARCH_RESULTS = 25
 
 
@@ -51,7 +52,7 @@ class KnowledgeSearch:
         return [knowledge_base_name(n) for n in self.tool_names]
 
     async def search(self, queries: list[str], context: dict | None = None,
-                     knowledge_bases: list[str] | None = None) -> list[dict]:
+                     knowledge_bases: list[str] | None = None, channel: str | None = None) -> list[dict]:
         """Return the results across all accessible knowledge bases, best first, each labelled with its
         knowledge base. The caller gives the model only the first MAX_SEARCH_RESULTS.
 
@@ -60,7 +61,8 @@ class KnowledgeSearch:
 
         With a context ({knowledge_base, folders}) only that knowledge base is searched, and only passages
         from those folders are kept. With knowledge_bases (a specialist chat) only those are searched. A
-        knowledge base the user may not use is never searched.
+        knowledge base the user may not use is never searched. With a channel ("agency", ...) passages from
+        other channels' folders are dropped (see channels.py).
         """
         names, number_of_results = self.tool_names, SEARCH_RESULTS_PER_KB
         if knowledge_bases is not None:
@@ -68,6 +70,8 @@ class KnowledgeSearch:
         if context:
             names = [n for n in self.tool_names if knowledge_base_name(n) == context["knowledge_base"]]
             number_of_results = CONTEXT_SEARCH_RESULTS
+        if channel:
+            number_of_results = CONTEXT_SEARCH_RESULTS  # other channels' passages are dropped below
         calls = [(name, query) for query in queries for name in names]
         outcomes = await asyncio.gather(
             *(self._client.call_tool_async(f"kb-{uuid.uuid4().hex[:12]}", name,
@@ -84,6 +88,8 @@ class KnowledgeSearch:
             for result in iter_kb_results(outcome):
                 uri = ((result.get("location") or {}).get("s3Location") or {}).get("uri") or ""
                 if context and folder_of(uri) not in context["folders"]:
+                    continue
+                if not visible_to(uri, channel):
                     continue
                 key = (uri, (result.get("content") or {}).get("text") or "")
                 if key not in best or (result.get("score") or 0.0) > (best[key].get("score") or 0.0):

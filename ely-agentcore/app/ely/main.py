@@ -6,6 +6,7 @@ from strands import Agent
 from strands.agent.conversation_manager.null_conversation_manager import NullConversationManager
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from model.load import BEDROCK_MODEL_ID, accepts_temperature, load_model
+from mcp_client.channels import channel_label, user_channel
 from mcp_client.client import GatewayAuth, get_gateway_mcp_client
 from mcp_client.contexts import context_options, folder_label, parse_context, passages_by_area
 from mcp_client.follow_up import search_queries
@@ -422,8 +423,12 @@ async def invoke(payload, context):
     # a follow-up gets the subject it refers to from the previous question
     current, previous = _question_and_previous(agent.messages, prompt)
     _, queries = await asyncio.to_thread(search_queries, previous, current) if current else ("", [])
-    results = await search.search(queries, context, knowledge_bases if requested is not None else None) if queries else []
-    log.info("Retrieved %d passage(s) from %s for %s (context: %s)", len(results), knowledge_bases, queries, context)
+    # A user in a sales channel group never gets another channel's documents
+    channel = user_channel(authorization)
+    results = (await search.search(queries, context, knowledge_bases if requested is not None else None, channel)
+               if queries else [])
+    log.info("Retrieved %d passage(s) from %s for %s (context: %s, channel: %s)",
+             len(results), knowledge_bases, queries, context, channel or "all")
     yield {"type": "retrieval", "knowledge_bases": knowledge_bases, "passages": len(results)}
     if not results:
         _remember_answer(agent, "not_available", [])
@@ -446,6 +451,10 @@ async def invoke(payload, context):
     access_note = ("\nKnowledge bases this user can search: "
                    f"{', '.join(_knowledge_base_label(k) for k in search.knowledge_bases)} "
                    f"(the company has: {', '.join(KNOWLEDGE_BASE_LABELS.values())}).\n")
+    if channel:
+        access_note += (f"This user works in the {channel_label(channel)} sales channel: the passages are from "
+                        f"{channel_label(channel)} documents and documents for every channel. Answer for the "
+                        f"{channel_label(channel)} channel; don't describe other channels' rules.\n")
     specialist_note = _specialist_note(knowledge_bases, search.knowledge_bases) if requested is not None else ""
     instructions = f"{DEFAULT_SYSTEM_PROMPT}{access_note}{specialist_note}{_previous_answer_note(last)}{context_note}\n"
     agent.system_prompt = f"{instructions}{area_note}Knowledge base passages:\n\n{format_passages(results)}"
