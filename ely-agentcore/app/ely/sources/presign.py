@@ -67,6 +67,8 @@ def select_sources(results: list[dict]) -> list[dict]:
         text = ((result.get("content") or {}).get("text") or "")
         by_name[name] = {"s3_uri": uri, "score": score, "snippet": " ".join(text.split())[:500],
                          "knowledge_base": result.get("knowledge_base")}
+        if result.get("start_seconds"):  # a video passage that starts partway in
+            by_name[name]["start_seconds"] = result["start_seconds"]
     return sorted(by_name.values(), key=lambda s: s["score"], reverse=True)[:MAX_SOURCES]
 
 
@@ -91,6 +93,9 @@ def presign_sources(sources: list[dict]) -> list[dict]:
                         "ResponseContentDisposition": f"inline; filename*=UTF-8''{quoted}"},
                 ExpiresIn=PRESIGNED_URL_EXPIRY_SECONDS,
             )
+            if source.get("start_seconds"):
+                # Media fragment: players start there. It follows the signed query, so the signature still holds.
+                entry["view_url"] += f"#t={source['start_seconds']}"
             entry["download_url"] = s3.generate_presigned_url(
                 "get_object",
                 Params={"Bucket": bucket, "Key": key,

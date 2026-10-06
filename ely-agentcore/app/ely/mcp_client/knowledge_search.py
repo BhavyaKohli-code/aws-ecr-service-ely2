@@ -27,6 +27,35 @@ SEARCH_RESULTS_PER_KB = int(os.getenv("SEARCH_RESULTS_PER_KB", "12"))
 CONTEXT_SEARCH_RESULTS = 25
 
 
+def _clock(millis) -> str:
+    seconds = int(float(millis) // 1000)
+    return f"{seconds // 60:02d}:{seconds % 60:02d}"
+
+
+def with_text(result: dict) -> dict:
+    """A video or audio passage (Bedrock Data Automation parser) as a text one.
+
+    Those come back as {"content": {"type": "VIDEO", "video": {"summary": ...}}} with the clip's start and end time in
+    the metadata, instead of {"content": {"text": ...}}. The summary (transcript and what is shown on screen) becomes the
+    text, labelled with its time range so the answer can say where in the video it is, and the start is kept as
+    "start_seconds" so the source link can open the video there.
+    """
+    content = result.get("content") or {}
+    if content.get("text"):
+        return result
+    media = next((content[k] for k in ("video", "audio") if isinstance(content.get(k), dict)), None)
+    if not media or not (media.get("summary") or "").strip():
+        return result
+    metadata = result.get("metadata") or {}
+    start = metadata.get("x-amz-bedrock-kb-chunk-start-time-in-millis")
+    end = metadata.get("x-amz-bedrock-kb-chunk-end-time-in-millis")
+    kind = "Video" if "video" in content else "Audio"
+    span = f" [{_clock(start)}–{_clock(end)}]" if start is not None and end is not None else ""
+    text = f"{kind}{span}: {media['summary'].strip()}"
+    timed = {"start_seconds": int(float(start) // 1000)} if start is not None else {}
+    return {**result, "content": {**content, "text": text}, **timed}
+
+
 def knowledge_base_name(tool_name: str) -> str:
     """Gateway tool names are '<target>___<tool>'; the target names the knowledge base."""
     return tool_name.split("___")[0]
@@ -85,7 +114,7 @@ class KnowledgeSearch:
                 logger.warning("Search on %s for %r failed: %s", name, query, outcome)
                 failed.append(name)
                 continue
-            for result in iter_kb_results(outcome):
+            for result in map(with_text, iter_kb_results(outcome)):
                 uri = ((result.get("location") or {}).get("s3Location") or {}).get("uri") or ""
                 if context and folder_of(uri) not in context["folders"]:
                     continue
