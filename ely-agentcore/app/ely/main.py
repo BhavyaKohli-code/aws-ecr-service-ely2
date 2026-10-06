@@ -85,7 +85,8 @@ _REFERS_BACK = re.compile(
 _WHERE_FROM = re.compile(r"\bwhere (did|do) you (get|find|take|read|see)\b", re.I)
 # Answers are kept in session state under this key: {"status": ..., "sources": [...]}
 LAST_ANSWER_KEY = "ely_last_answer"
-KNOWLEDGE_BASE_LABELS = {"hr-knowledge-retrieval": "HR", "sales-knowledge-retrieval": "Sales"}
+KNOWLEDGE_BASE_LABELS = {"hr-knowledge-retrieval": "HR", "sales-knowledge-retrieval": "Sales",
+                         "video-knowledge-retrieval": "Sales videos"}
 # Added to the system prompt in a specialist chat (the caller sent "knowledge_bases"): only those are searched,
 # so a question that belongs to another knowledge base is pointed there instead of answered.
 SPECIALIST_RULE = """

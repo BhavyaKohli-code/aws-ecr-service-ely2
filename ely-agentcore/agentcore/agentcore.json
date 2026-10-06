@@ -71,7 +71,7 @@
   "policyEngines": [
     {
       "name": "elyPolicyEngine",
-      "description": "ELY tool access on the quick-start gateway: HR for FULL_TIME only, Sales for FULL_TIME and BUSINESS_PARTNER",
+      "description": "ELY tool access on the quick-start gateway: HR for FULL_TIME only, Sales and the Sales videos for FULL_TIME and BUSINESS_PARTNER",
       "policies": [
         {
           "name": "ely_hr_fulltime_only",
@@ -84,6 +84,13 @@
           "name": "ely_sales_employees_and_partners",
           "description": "Sales knowledge base: FULL_TIME and BUSINESS_PARTNER groups",
           "statement": "permit(\n  principal is AgentCore::OAuthUser,\n  action == AgentCore::Action::\"sales-knowledge-retrieval___retrieve_sales\",\n  resource == AgentCore::Gateway::\"arn:aws:bedrock-agentcore:ap-south-1:789270642392:gateway/gateway-quick-start-5911f1-51wfgctwi8\"\n)\nwhen {\n  principal.hasTag(\"cognito:groups\") &&\n  (principal.getTag(\"cognito:groups\") like \"*FULL_TIME*\" ||\n   principal.getTag(\"cognito:groups\") like \"*BUSINESS_PARTNER*\")\n};",
+          "validationMode": "FAIL_ON_ANY_FINDINGS",
+          "enforcementMode": "ACTIVE"
+        },
+        {
+          "name": "ely_videos_employees_and_partners",
+          "description": "Sales digital-tool videos knowledge base: FULL_TIME and BUSINESS_PARTNER groups",
+          "statement": "permit(\n  principal is AgentCore::OAuthUser,\n  action == AgentCore::Action::\"video-knowledge-retrieval___retrieve_videos\",\n  resource == AgentCore::Gateway::\"arn:aws:bedrock-agentcore:ap-south-1:789270642392:gateway/gateway-quick-start-5911f1-51wfgctwi8\"\n)\nwhen {\n  principal.hasTag(\"cognito:groups\") &&\n  (principal.getTag(\"cognito:groups\") like \"*FULL_TIME*\" ||\n   principal.getTag(\"cognito:groups\") like \"*BUSINESS_PARTNER*\")\n};",
           "validationMode": "FAIL_ON_ANY_FINDINGS",
           "enforcementMode": "ACTIVE"
         }
