@@ -78,9 +78,17 @@ _BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
 _bedrock = None
 
 
-def search_queries(previous: str, current: str) -> tuple[str, list[str]]:
-    """The standalone English question, and every text to search for: the question as asked first, then the
-    rewrites. Only the question as asked if the model can't be reached."""
+_FOLLOW_UP = re.compile(r"^FOLLOW[_ ]?UP\b", re.I)
+
+
+def search_queries(previous: str, current: str) -> tuple[bool, list[str]]:
+    """Whether the question is a follow-up (continues the previous question's subject), and every text to
+    search for: the question as asked first, then the rewrites. Only the question as asked, and not a
+    follow-up, if the model can't be reached.
+
+    The follow-up flag lets the caller skip the "which area?" clarifying step: a follow-up's subject is
+    already fixed by the conversation, so asking which area it is about just repeats what we already know.
+    """
     global _bedrock
     try:
         if _bedrock is None:
@@ -94,8 +102,8 @@ def search_queries(previous: str, current: str) -> tuple[str, list[str]]:
         reply = "\n".join(b["text"] for b in response["output"]["message"]["content"] if "text" in b)
     except Exception:
         logger.exception("Could not rewrite the question; searching it as written")
-        return current, [current]
+        return False, [current]
     lines = [_BULLET.sub("", line).strip().strip('"') for line in reply.splitlines()]
+    is_follow_up = any(_FOLLOW_UP.match(line) for line in lines)
     rewrites = [line for line in lines if line and not _LABEL.match(line)][:1 + MAX_PHRASES]
-    question = rewrites[0] if rewrites else current
-    return question, list(dict.fromkeys([current, *rewrites]))
+    return is_follow_up, list(dict.fromkeys([current, *rewrites]))

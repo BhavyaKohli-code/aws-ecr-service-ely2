@@ -423,7 +423,7 @@ async def invoke(payload, context):
     # Search for the question on its own, as asked and rewritten in English the way the documents word it;
     # a follow-up gets the subject it refers to from the previous question
     current, previous = _question_and_previous(agent.messages, prompt)
-    _, queries = await asyncio.to_thread(search_queries, previous, current) if current else ("", [])
+    is_follow_up, queries = await asyncio.to_thread(search_queries, previous, current) if current else (False, [])
     # A user in a sales channel group never gets another channel's documents
     channel = user_channel(authorization)
     results = (await search.search(queries, context, knowledge_bases if requested is not None else None, channel)
@@ -443,7 +443,9 @@ async def invoke(payload, context):
     # Good matches from more than one folder: the model is told which passages come from which, and replies
     # [ASK_AREA] instead of answering when they answer the question differently. The folders are then offered
     # as choices, and the same question comes back with the chosen one as its context.
-    options, area_note = ([], "") if context else _areas(results)
+    # Not for a follow-up: its subject is already set by the previous question, so asking which area it is
+    # about just re-asks what the conversation already settled — answer from the best passages instead.
+    options, area_note = ([], "") if (context or is_follow_up) else _areas(results)
 
     # Answer from the retrieved passages only. They go in the system prompt for this turn,
     # so conversation memory keeps just the question and the answer.
