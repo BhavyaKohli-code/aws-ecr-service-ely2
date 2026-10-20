@@ -8,7 +8,7 @@ from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from model.load import BEDROCK_MODEL_ID, accepts_temperature, load_model
 from mcp_client.channels import channel_label, user_channel
 from mcp_client.client import GatewayAuth, get_gateway_mcp_client
-from mcp_client.contexts import context_options, folder_label, parse_context, passages_by_area
+from mcp_client.contexts import MAX_HINT_LENGTH, context_options, folder_label, parse_context, passages_by_area
 from datetime import datetime
 from mcp_client.follow_up import IST, SearchPlan, search_queries
 from mcp_client.knowledge_search import MAX_SEARCH_RESULTS, SECOND_LOOK_RESULTS, KnowledgeSearch, format_passages
@@ -59,8 +59,10 @@ NOT_FOUND_ANSWER = "I couldn't find any information about this in the knowledge 
 NO_SOURCE_ANSWER = ("My previous answer wasn't based on any document: the knowledge base didn't have "
                     "information on that question.")
 CLARIFY_QUESTION = "I found information on this in more than one area. Which one is your question about?"
+# Asked instead when the model wrote a "Do you mean ...?" hint for each choice
+CLARIFY_HINT_QUESTION = "I found a few different answers to this. Which one do you mean?"
 # Added to the system prompt when the passages come from more than one area (folder). The model replies
-# ASK_AREA_MARKER alone when they answer differently, and the areas are offered as choices.
+# ASK_AREA_MARKER and a hint per area when they answer differently, and the areas are offered as choices.
 AREA_RULE = """
 The passages come from different areas of the knowledge base:
 {areas}
@@ -68,9 +70,19 @@ If at least two of these areas each answer the question but say different things
 values, limits, processes, documents or products, so the right answer depends on which area the user means:
 for example a different entry age or minimum premium per product or channel, a different process in one
 channel than another, or employee incentive plans in one area and advisor sales commission in another),
-don't answer: reply with only [ASK_AREA], and the user will be asked to pick an area. If the areas agree, add
-detail to one and the same answer, or only one of them answers the question, answer normally.
+don't answer: reply with [ASK_AREA] and then one line for each area that answers the question, as
+"<area number>: Do you mean ...?". The user picks one of these lines without seeing the area names, so each
+says in plain words (at most 25 words) what that area's passages are about for this question: the product,
+plan, process, channel or people it covers and what sets it apart from the other areas. For example, for
+"yellow fruit" with mango in area 1 and banana in area 2:
+1: Do you mean mango, the yellow summer fruit eaten ripe or as aamras?
+2: Do you mean banana, the yellow fruit you peel, available all year?
+Don't name the areas themselves, and leave out areas that don't answer the question. Then end with the
+USED_PASSAGES line as usual. If the areas agree, add detail to one and the same answer, or only one of them
+answers the question, answer normally.
 """
+# A hint line of an [ASK_AREA] reply: "<area number>: Do you mean ...?"
+_HINT_LINE = re.compile(r"^[ \t]*[-*]?[ \t]*(?:area[ \t]*)?(\d{1,2})[ \t]*[:.)-][ \t]*(\S[^\n]*)$", re.I | re.M)
 # The model starts its reply with NOT_AVAILABLE_MARKER when the passages don't answer the question; markers
 # are removed before anything reaches the caller (see model/reply.py).
 # The model ends its reply with this line naming the passages it used; it is removed before anything
@@ -247,16 +259,39 @@ def _final(answer: str, sources: list, answer_status: str) -> dict:
     return {"type": "final", "answer": answer, "answer_status": answer_status, "sources": sources}
 
 
-def _clarify(options: list[dict]) -> dict:
+def _clarify(options: list[dict], question: str) -> dict:
     """Final event asking which area the question is about. The caller asks the same question again
-    with the chosen option's {knowledge_base, folders} as "context"."""
-    return {"type": "final", "answer": CLARIFY_QUESTION, "answer_status": "clarify", "sources": [],
+    with the chosen option's {knowledge_base, folders, hint} as "context"."""
+    return {"type": "final", "answer": question, "answer_status": "clarify", "sources": [],
             "options": options}
+
+
+def _with_hints(options: list[dict], reply_text: str) -> list[dict]:
+    """The options the model wrote a "Do you mean ...?" line for, each with it as "hint". All options, without
+    hints, when it wrote one for fewer than two of them (there would be nothing left to choose between)."""
+    hints: dict[int, str] = {}
+    for number, hint in _HINT_LINE.findall(reply_text):
+        index = int(number) - 1
+        if 0 <= index < len(options) and index not in hints:
+            hints[index] = " ".join(hint.split())[:MAX_HINT_LENGTH]
+    if len(hints) < 2:
+        return options
+    return [{**options[i], "hint": hints[i]} for i in sorted(hints)]
 
 
 def _context_label(context: dict, with_knowledge_base: bool) -> str:
     label = " / ".join(folder_label(f) for f in context["folders"])
     return f"{label} ({_knowledge_base_label(context['knowledge_base'])})" if with_knowledge_base else label
+
+
+def _context_note(context: dict | None) -> str:
+    if not context:
+        return ""
+    note = f"\nThe user has said this question is about: {_context_label(context, True)}.\n"
+    if context.get("hint"):
+        note += (f'Asked what they meant, they picked: "{context["hint"]}" Answer about that, from this '
+                 "area's passages.\n")
+    return note
 
 
 def _strip_marker(text: str) -> str:
@@ -277,7 +312,8 @@ def _areas(results: list[dict]) -> tuple[list[dict], str]:
     several_kbs = len({o["knowledge_base"] for o in options}) > 1
     for option in options:
         option["label"] = _context_label(option, several_kbs)
-    areas = "\n".join(f"- {o['label']}: passages {', '.join(map(str, n))}" for o, n in zip(options, numbers))
+    areas = "\n".join(f"{i}. {o['label']}: passages {', '.join(map(str, n))}"
+                      for i, (o, n) in enumerate(zip(options, numbers), start=1))
     return options, AREA_RULE.format(areas=areas) + "\n"
 
 
@@ -488,8 +524,7 @@ async def invoke(payload, context):
 
     # Answer from the retrieved passages only. They go in the system prompt for this turn,
     # so conversation memory keeps just the question and the answer.
-    context_note = (f"\nThe user has said this question is about: {_context_label(context, True)}.\n"
-                    if context else "")
+    context_note = _context_note(context)
     access_note = ("\nKnowledge bases this user can search: "
                    f"{', '.join(_knowledge_base_label(k) for k in search.knowledge_bases)} "
                    f"(the company has: {', '.join(KNOWLEDGE_BASE_LABELS.values())}).\n")
@@ -526,10 +561,15 @@ async def invoke(payload, context):
         yield event
 
     if reply.marker == ASK_AREA_MARKER and options:
-        log.info("Areas %s answer differently: asking which one is meant", [o["label"] for o in options])
-        _replace_reply(agent, CLARIFY_QUESTION)
-        yield {"event": {"contentBlockDelta": {"delta": {"text": CLARIFY_QUESTION}}}}
-        yield _clarify(options)
+        options = _with_hints(options, _strip_marker(reply.rest()))
+        hinted = all(o.get("hint") for o in options)
+        question = CLARIFY_HINT_QUESTION if hinted else CLARIFY_QUESTION
+        log.info("Areas %s answer differently: asking which one is meant%s", [o["label"] for o in options],
+                 f" ({[o['hint'] for o in options]})" if hinted else "")
+        # Memory keeps the choices too, so a reply that doesn't pick one still reads in context
+        _replace_reply(agent, question + "".join(f"\n- {o['hint']}" for o in options if hinted))
+        yield {"event": {"contentBlockDelta": {"delta": {"text": question}}}}
+        yield _clarify(options, question)
         return
 
     if reply.marker:

@@ -4,8 +4,9 @@ Documents live at s3://<bucket>/DMS_copilot/<HR|Sales>/<folder>/..., and the top
 wpc, payroll, ...) is what tells apart answers that match equally well. When good matches come from more
 than one folder, the answering model is told which passages come from which folder; if they answer the
 question differently it asks the user to pick one (the folders become choices), and that folder alone is
-searched for the same question. Folders whose passages can be combined into one answer are answered from
-together.
+searched for the same question. Each choice carries a "Do you mean ...?" hint the model writes from that
+folder's passages, so the user picks by what the answer is about rather than by folder name. Folders whose
+passages can be combined into one answer are answered from together.
 """
 import os
 import re
@@ -18,6 +19,8 @@ CLARIFY_MIN_SCORE = float(os.getenv("CLARIFY_MIN_SCORE", "0.5"))
 CLARIFY_MARGIN = float(os.getenv("CLARIFY_MARGIN", "0.10"))
 # At most this many choices are offered, best match first
 MAX_CONTEXT_OPTIONS = int(os.getenv("MAX_CONTEXT_OPTIONS", "4"))
+# A choice's "Do you mean ...?" line, as the answering model writes it and the caller sends it back
+MAX_HINT_LENGTH = 300
 
 # Display names for folders; any other folder is shown as its name with underscores as spaces
 FOLDER_LABELS = {
@@ -102,11 +105,16 @@ def passages_by_area(options: list[dict], results: list[dict]) -> list[list[int]
 
 
 def parse_context(raw) -> dict | None:
-    """The caller's chosen context ({knowledge_base, folders}), validated; None if absent or malformed."""
+    """The caller's chosen context ({knowledge_base, folders, hint}), validated; None if absent or malformed.
+    hint is the "Do you mean ...?" line the user picked, if the choice had one."""
     if not isinstance(raw, dict):
         return None
     kb, folders = raw.get("knowledge_base"), raw.get("folders")
     if not isinstance(kb, str) or not _NAME.match(kb) or not isinstance(folders, list):
         return None
     folders = [f for f in folders if isinstance(f, str) and _NAME.match(f)][:5]
-    return {"knowledge_base": kb, "folders": folders} if folders else None
+    if not folders:
+        return None
+    hint = raw.get("hint")
+    hint = " ".join(hint.split())[:MAX_HINT_LENGTH] if isinstance(hint, str) else ""
+    return {"knowledge_base": kb, "folders": folders, **({"hint": hint} if hint else {})}
