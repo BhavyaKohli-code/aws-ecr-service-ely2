@@ -1,0 +1,15 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CheckQuestionsWithTheElyGuardrail",
+      "Effect": "Allow",
+      "Action": "bedrock:ApplyGuardrail",
+      "Resource": [
+        "arn:aws:bedrock:ap-south-1:789270642392:guardrail/uroqimkeol4h",
+        "arn:aws:bedrock:*:789270642392:guardrail-profile/apac.guardrail.v1:0",
+        "arn:aws:bedrock:*::guardrail-profile/apac.guardrail.v1:0"
+      ]
+    }
+  ]
+}

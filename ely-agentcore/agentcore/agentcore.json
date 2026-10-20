@@ -45,6 +45,14 @@
         {
           "name": "WEB_SEARCH_URL",
           "value": "https://html.duckduckgo.com/html/?q={query}"
+        },
+        {
+          "name": "GUARDRAIL_ID",
+          "value": "uroqimkeol4h"
+        },
+        {
+          "name": "GUARDRAIL_VERSION",
+          "value": "4"
         }
       ],
       "requestHeaderAllowlist": [
@@ -52,7 +60,8 @@
       ],
       "additionalPolicies": [
         "policies/documents-read.json",
-        "policies/browser-use.json"
+        "policies/browser-use.json",
+        "policies/guardrail-use.json"
       ],
       "authorizerType": "CUSTOM_JWT",
       "authorizerConfiguration": {

@@ -13,6 +13,7 @@ from datetime import datetime
 from mcp_client.follow_up import IST, SearchPlan, search_queries
 from mcp_client.knowledge_search import MAX_SEARCH_RESULTS, SECOND_LOOK_RESULTS, KnowledgeSearch, format_passages
 from memory.session import get_memory_session_manager
+from model.guardrail import blocked_answer
 from model.reply import ASK_AREA_MARKER, MARKERS, NOT_AVAILABLE_MARKER, ReplyFilter
 from sources.presign import MAX_SOURCES, presign_sources, select_sources
 from web.browse import as_passages, web_search, web_sources
@@ -255,7 +256,8 @@ def _question_and_previous(history: list, prompt) -> tuple[str, str]:
 
 
 def _final(answer: str, sources: list, answer_status: str) -> dict:
-    """answer_status: 'answered', 'not_available' (knowledge base doesn't cover it) or 'no_access'."""
+    """answer_status: 'answered', 'not_available' (knowledge base doesn't cover it), 'no_access' or 'blocked'
+    (the guardrail refused an off-topic or harmful question)."""
     return {"type": "final", "answer": answer, "answer_status": answer_status, "sources": sources}
 
 
@@ -486,6 +488,14 @@ async def invoke(payload, context):
     current, previous = _question_and_previous(agent.messages, prompt)
     is_follow_up, queries, web_query = (await asyncio.to_thread(search_queries, previous, current) if current
                                         else SearchPlan(False, [], None))
+    # Off-topic or harmful questions get the guardrail's message and nothing is searched. A follow-up is checked
+    # as rewritten, so it carries its subject ("and for Raichu?" alone says little)
+    refusal = await asyncio.to_thread(blocked_answer, queries[0] if is_follow_up and queries else current)
+    if refusal:
+        _remember_answer(agent, "not_available", [])
+        yield {"event": {"contentBlockDelta": {"delta": {"text": refusal}}}}
+        yield _final(refusal, [], "blocked")
+        return
     if SALES_KNOWLEDGE_BASE not in knowledge_bases:
         web_query = None
     # A user in a sales channel group never gets another channel's documents
