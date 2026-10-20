@@ -9,11 +9,13 @@ from model.load import BEDROCK_MODEL_ID, accepts_temperature, load_model
 from mcp_client.channels import channel_label, user_channel
 from mcp_client.client import GatewayAuth, get_gateway_mcp_client
 from mcp_client.contexts import context_options, folder_label, parse_context, passages_by_area
-from mcp_client.follow_up import search_queries
+from datetime import datetime
+from mcp_client.follow_up import IST, SearchPlan, search_queries
 from mcp_client.knowledge_search import MAX_SEARCH_RESULTS, SECOND_LOOK_RESULTS, KnowledgeSearch, format_passages
 from memory.session import get_memory_session_manager
 from model.reply import ASK_AREA_MARKER, MARKERS, NOT_AVAILABLE_MARKER, ReplyFilter
-from sources.presign import presign_sources, select_sources
+from sources.presign import MAX_SOURCES, presign_sources, select_sources
+from web.browse import as_passages, web_search, web_sources
 
 app = BedrockAgentCoreApp()
 log = app.logger
@@ -87,6 +89,19 @@ _WHERE_FROM = re.compile(r"\bwhere (did|do) you (get|find|take|read|see)\b", re.
 LAST_ANSWER_KEY = "ely_last_answer"
 KNOWLEDGE_BASE_LABELS = {"hr-knowledge-retrieval": "HR", "sales-knowledge-retrieval": "Sales",
                          "video-knowledge-retrieval": "Sales videos"}
+# Web search covers Sales topics (fund performance, bonus declared, claim settlement ratio), so it runs only in a
+# chat that searches the Sales knowledge base
+SALES_KNOWLEDGE_BASE = "sales-knowledge-retrieval"
+# Added to the system prompt when web pages are among the passages (see web/browse.py)
+WEB_RULE = """
+Some passages below are marked "Web page": public web pages found for this question today ({today}). The others are
+from the company knowledge bases. Web pages count as passages, but only for public facts (fund performance, NAV,
+bonus declared, claim settlement ratio, AUM, new funds, market indices):
+- If the knowledge base passages answer the question, answer from them.
+- When you use a web page, say the figures are from the web and give the date each one is as of. Prefer the most
+  recent figures, and an official site (axismaxlife.com, irdai.gov.in, nseindia.com, bseindia.com) when pages
+  disagree. Don't write links or URLs in the answer: the pages you used are shown as sources.
+"""
 # Added to the system prompt in a specialist chat (the caller sent "knowledge_bases"): only those are searched,
 # so a question that belongs to another knowledge base is pointed there instead of answered.
 SPECIALIST_RULE = """
@@ -312,24 +327,34 @@ def _previous_answer_note(last: dict | None) -> str:
         return ""
     if not last.get("sources"):
         return "\nPrevious answer: it was not based on any document (the knowledge base did not cover it).\n"
-    docs = "; ".join(f"{s['s3_uri'].rsplit('/', 1)[-1]} ({_knowledge_base_label(s.get('knowledge_base'))} knowledge base)"
+    docs = "; ".join(f"{s['url']} (a web page)" if _is_web(s) else
+                     f"{s['s3_uri'].rsplit('/', 1)[-1]} ({_knowledge_base_label(s.get('knowledge_base'))} knowledge base)"
                      for s in last["sources"])
     return f"\nPrevious answer: it was built from {docs}.\n"
+
+
+def _is_web(source: dict) -> bool:
+    return source.get("source_type") == "web"
 
 
 def _source_answer(last: dict) -> tuple[str, list, str]:
     """Answer, fresh sources and status for 'which document did you use?', from the saved previous answer."""
     if not last.get("sources"):
         return NO_SOURCE_ANSWER, [], "not_available"
-    sources = presign_sources(last["sources"])
-    lines = [f"- {s['title']} ({_knowledge_base_label(s.get('knowledge_base'))} knowledge base)" for s in sources]
+    sources = (presign_sources([s for s in last["sources"] if not _is_web(s)])
+               + [s for s in last["sources"] if _is_web(s)])
+    lines = [f"- {s['title']} (web page: {s['url']})" if _is_web(s) else
+             f"- {s['title']} ({_knowledge_base_label(s.get('knowledge_base'))} knowledge base)" for s in sources]
     return "My previous answer came from:\n" + "\n".join(lines), sources, "answered"
 
 
 def _remember_answer(agent, status: str, sources: list) -> None:
     """Save the answer's sources in session state, which AgentCore Memory keeps with the session."""
     keep = ("s3_uri", "score", "snippet", "knowledge_base")
-    agent.state.set(LAST_ANSWER_KEY, {"status": status, "sources": [{k: s.get(k) for k in keep} for s in sources]})
+    # A web page is shown again as it is; a document gets fresh pre-signed links from its s3_uri
+    web_keep = ("source_type", "title", "file_name", "url", "view_url", "expires_in_seconds")
+    agent.state.set(LAST_ANSWER_KEY, {"status": status, "sources": [
+        {k: s[k] for k in keep + (web_keep if _is_web(s) else ()) if s.get(k) is not None} for s in sources]})
     session_manager = getattr(agent, "_session_manager", None)
     if session_manager:  # the state changed after the turn ended, so it needs its own save
         try:
@@ -423,15 +448,27 @@ async def invoke(payload, context):
     # Search for the question on its own, as asked and rewritten in English the way the documents word it;
     # a follow-up gets the subject it refers to from the previous question
     current, previous = _question_and_previous(agent.messages, prompt)
-    is_follow_up, queries = await asyncio.to_thread(search_queries, previous, current) if current else (False, [])
+    is_follow_up, queries, web_query = (await asyncio.to_thread(search_queries, previous, current) if current
+                                        else SearchPlan(False, [], None))
+    if SALES_KNOWLEDGE_BASE not in knowledge_bases:
+        web_query = None
     # A user in a sales channel group never gets another channel's documents
     channel = user_channel(authorization)
-    results = (await search.search(queries, context, knowledge_bases if requested is not None else None, channel)
-               if queries else [])
-    log.info("Retrieved %d passage(s) from %s for %s (context: %s, channel: %s)",
-             len(results), knowledge_bases, queries, context, channel or "all")
-    yield {"type": "retrieval", "knowledge_bases": knowledge_bases, "passages": len(results)}
-    if not results:
+
+    async def search_knowledge_bases():
+        return (await search.search(queries, context, knowledge_bases if requested is not None else None, channel)
+                if queries else [])
+
+    # A public fact that changes (fund performance, bonus declared, Nifty) is also searched on the web, at the
+    # same time as the knowledge bases; the knowledge base passages still come first
+    if web_query:
+        yield {"type": "status", "text": "Searching the web…"}
+    results, web_results = await asyncio.gather(search_knowledge_bases(), web_search(web_query or ""))
+    web = as_passages(web_results)
+    log.info("Retrieved %d passage(s) from %s for %s (context: %s, channel: %s); web search %r: %d page(s)",
+             len(results), knowledge_bases, queries, context, channel or "all", web_query, len(web))
+    yield {"type": "retrieval", "knowledge_bases": knowledge_bases, "passages": len(results), "web_pages": len(web)}
+    if not results and not web:
         _remember_answer(agent, "not_available", [])
         yield _final(NOT_FOUND_ANSWER, [], "not_available")
         return
@@ -439,6 +476,8 @@ async def invoke(payload, context):
     # The model reads only the best few; the next ones get a second look if those don't answer the question
     more = results[MAX_SEARCH_RESULTS:MAX_SEARCH_RESULTS + SECOND_LOOK_RESULTS]
     results = results[:MAX_SEARCH_RESULTS]
+    # Numbered after the knowledge base passages, so the area notes below keep their numbers
+    passages = results + web
 
     # Good matches from more than one folder: the model is told which passages come from which, and replies
     # [ASK_AREA] instead of answering when they answer the question differently. The folders are then offered
@@ -459,8 +498,11 @@ async def invoke(payload, context):
                         f"{channel_label(channel)} documents and documents for every channel. Answer for the "
                         f"{channel_label(channel)} channel; don't describe other channels' rules.\n")
     specialist_note = _specialist_note(knowledge_bases, search.knowledge_bases) if requested is not None else ""
-    instructions = f"{DEFAULT_SYSTEM_PROMPT}{access_note}{specialist_note}{_previous_answer_note(last)}{context_note}\n"
-    agent.system_prompt = f"{instructions}{area_note}Knowledge base passages:\n\n{format_passages(results)}"
+    web_note = WEB_RULE.format(today=datetime.now(IST).strftime("%d %B %Y")) if web else ""
+    instructions = (f"{DEFAULT_SYSTEM_PROMPT}{access_note}{specialist_note}{web_note}{_previous_answer_note(last)}"
+                    f"{context_note}\n")
+    heading = "Knowledge base and web passages" if web else "Knowledge base passages"
+    agent.system_prompt = f"{instructions}{area_note}{heading}:\n\n{format_passages(passages)}"
     reply = ReplyFilter()
     _drop_reasoning(agent.messages)
 
@@ -494,7 +536,7 @@ async def invoke(payload, context):
         # Not answered from these passages, so nothing was shown yet. Search ranks the passage that answers a
         # question anywhere in the first ~25 (often 15th-25th), but the model reads only the best few: rather
         # than send it every passage on every question, it gets one more look, at the next passages, only now.
-        answer, used = _split_used_passages(reply.rest(), len(results))
+        answer, used = _split_used_passages(reply.rest(), len(passages))
         if more and not used:
             second, second_used = _split_used_passages(await asyncio.to_thread(
                 _second_look, agent.messages[:-1], f"{instructions}Knowledge base passages:\n\n{format_passages(more)}"),
@@ -502,14 +544,14 @@ async def invoke(payload, context):
             log.info("Second look at %d more passage(s) %s", len(more),
                      "answered the question" if second_used else "didn't answer the question either")
             if second_used:
-                results, answer, used = more, second, second_used
+                passages, answer, used = more, second, second_used
         answer = _strip_marker(answer) or NOT_FOUND_ANSWER
         _replace_reply(agent, answer)  # memory saved the reply as the model wrote it
         yield {"event": {"contentBlockDelta": {"delta": {"text": answer}}}}
         # Passages used means the question was (at least partly) answered, even though the model marked it
         not_available = not used
     else:
-        answer, used = _split_used_passages(reply.shown + reply.rest(), len(results))
+        answer, used = _split_used_passages(reply.shown + reply.rest(), len(passages))
         if used is None and reply.rest():
             # No USED_PASSAGES line: the reply's last line was held back in case it was that line
             yield {"event": {"contentBlockDelta": {"delta": {"text": reply.rest()}}}}
@@ -532,10 +574,12 @@ async def invoke(payload, context):
         yield _final(answer, [], "answered")
         return
     # Exactly the passages the model used; all of them if it left out the USED_PASSAGES line
-    sources = select_sources([results[i - 1] for i in used] if used else results)
-    _remember_answer(agent, "answered", sources)
-    sources = presign_sources(sources)
-    log.info("Answer built from passages %s (%d document(s))", used, len(sources))
+    chosen = [passages[i - 1] for i in used] if used else passages
+    documents = select_sources([p for p in chosen if p.get("knowledge_base") != "web"])
+    pages = web_sources([p for p in chosen if p.get("knowledge_base") == "web"])[:MAX_SOURCES]
+    _remember_answer(agent, "answered", documents + pages)
+    sources = presign_sources(documents) + pages
+    log.info("Answer built from passages %s (%d document(s), %d web page(s))", used, len(documents), len(pages))
     yield _final(answer, sources, "answered")
 
 

@@ -37,13 +37,22 @@
         {
           "name": "MAX_SOURCES",
           "value": "3"
+        },
+        {
+          "name": "BROWSER_ID",
+          "value": "ely_browser-bTkAzWj2JM"
+        },
+        {
+          "name": "WEB_SEARCH_URL",
+          "value": "https://html.duckduckgo.com/html/?q={query}"
         }
       ],
       "requestHeaderAllowlist": [
         "Authorization"
       ],
       "additionalPolicies": [
-        "policies/documents-read.json"
+        "policies/documents-read.json",
+        "policies/browser-use.json"
       ],
       "authorizerType": "CUSTOM_JWT",
       "authorizerConfiguration": {

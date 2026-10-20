@@ -11,10 +11,19 @@ meaning only loosely, so a Hinglish question with one key term ("Pep client hai,
 found sales-process training instead of the underwriting guideline that answers it. The rewrite translates
 it, spells out abbreviations (PEP -> Politically Exposed Person), and adds two phrases worded the way the
 documents state answers ("PEP client underwriting: process and requirements"), which is what finds them.
+
+The same call decides whether the question may also be searched on the web: only a public fact that changes
+over time and that the company, the regulator or the stock exchange publishes (fund returns, NAV, bonus
+declared, claim settlement ratio, new fund launches, Nifty). Internal and personal questions (contests, the
+user's own sales, weightage grids) and product rules never are: the knowledge base answers those, and a web
+page would only give a generic or wrong answer. The knowledge base is still searched for every question,
+since the model can't see what it holds (the claim settlement ratio is in the competition benchmarks).
 """
 import logging
 import os
 import re
+from datetime import datetime, timedelta, timezone
+from typing import NamedTuple
 
 import boto3
 
@@ -49,12 +58,35 @@ heading or a table row. Make the first one state it as a rule: "<subject>: <elig
 requirements / documents required / process / limit>", choosing what the question asks for. Use different
 key terms in the second.
 
-Reply with exactly four lines: NEW or FOLLOW_UP, the question, then the two phrases. No numbering.
+Step 4. Decide whether the question may also be searched on the public web. Today is {today}.
+- WEB: it asks for a public fact about Axis Max Life Insurance (formerly Max Life Insurance) or the market that
+  changes over time and that the company website, the regulator (IRDAI) or a stock exchange publishes: fund
+  performance, returns, NAV, factsheets, fund portfolio or holdings, bonus declared, PAR fund performance,
+  claim settlement ratio, AUM, solvency ratio, company results or growth, newly launched funds (NFO),
+  market indices (Nifty, Sensex) and their returns.
+- KB: anything else, even when it mentions a fund, returns or Nifty. How a product or plan works, its
+  benefits, options, illustrated or expected returns ("return % of Smart VIBE for a 39 year old", "in Smart
+  RISE how do I get Nifty 50 returns"); eligibility and rules; underwriting; where or how to find something
+  ("how can I find fund values"); what a term means ("what is benchmark return"); HR; contests, incentives,
+  targets, product weightage or weightage grids, GPA; the user's own data (my sales, my performance, my
+  policies); calculations, projections, future returns or advice for a case ("what will I get if I invest
+  2 lakh", "which fund gives more returns after 15 years", "ULIP returns in the next 30 years", "make a
+  portfolio of 5 lakh"); greetings and chat about the assistant.
+- A FOLLOW_UP is WEB or KB as its rewritten question is.
+Then write a web search query for a WEB question: short, in English, with the month and year it is about (the
+latest one if the question says latest, current or this year). Name Axis Max Life in it for a fact about the
+company or its funds, but not for a market index ("Nifty 50 index returns 2010 to October 2026"). For a KB
+question write "none".
+
+Reply with exactly six lines: NEW or FOLLOW_UP, the question, the two phrases, then WEB or KB, then the web
+search query. No numbering.
 Example: previous "What is the entry age for SWAG?", latest "and for agency?" ->
 FOLLOW_UP
 What is the entry age for SWAG in the agency channel?
 SWAG eligibility: minimum and maximum entry age, agency channel
-Smart Wealth Advantage Guarantee plan age at entry for agency"""
+Smart Wealth Advantage Guarantee plan age at entry for agency
+KB
+none"""
 
 # The company's own abbreviations. Without them the model guessed wrong ("PL requests" became "Personal Loan
 # requests" instead of Privilege Leave) and the search found nothing about leave.
@@ -73,7 +105,10 @@ GLOSSARY = """- HR: PL = Privilege Leave, CL = Casual Leave, SL = Sick Leave, LO
 MAX_PHRASES = 2
 
 _LABEL = re.compile(r"^(NEW|FOLLOW[_ ]?UP)\W*$", re.I)
+_SOURCE = re.compile(r"^(WEB|KB)\W*$", re.I)
 _BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
+# "Today is ..." in the prompt: India time, so "this year" and "latest" mean the same as for the user
+IST = timezone(timedelta(hours=5, minutes=30))
 
 _bedrock = None
 
@@ -81,10 +116,18 @@ _bedrock = None
 _FOLLOW_UP = re.compile(r"^FOLLOW[_ ]?UP\b", re.I)
 
 
-def search_queries(previous: str, current: str) -> tuple[bool, list[str]]:
-    """Whether the question is a follow-up (continues the previous question's subject), and every text to
-    search for: the question as asked first, then the rewrites. Only the question as asked, and not a
-    follow-up, if the model can't be reached.
+class SearchPlan(NamedTuple):
+    is_follow_up: bool
+    queries: list[str]
+    # The web search query when the question may also be searched on the web, else None
+    web_query: str | None
+
+
+def search_queries(previous: str, current: str) -> SearchPlan:
+    """Whether the question is a follow-up (continues the previous question's subject), every text to search
+    the knowledge bases for (the question as asked first, then the rewrites), and the web search query if it
+    may be searched on the web. Only the question as asked, not a follow-up and no web search, if the model
+    can't be reached.
 
     The follow-up flag lets the caller skip the "which area?" clarifying step: a follow-up's subject is
     already fixed by the conversation, so asking which area it is about just repeats what we already know.
@@ -93,17 +136,23 @@ def search_queries(previous: str, current: str) -> tuple[bool, list[str]]:
     try:
         if _bedrock is None:
             _bedrock = boto3.client("bedrock-runtime")
-        prompt = REWRITE_PROMPT.format(previous=previous or "(none)", current=current, glossary=GLOSSARY)
+        prompt = REWRITE_PROMPT.format(previous=previous or "(none)", current=current, glossary=GLOSSARY,
+                                       today=datetime.now(IST).strftime("%d %B %Y"))
         response = _bedrock.converse(
             modelId=REWRITE_MODEL_ID,
             messages=[{"role": "user", "content": [{"text": prompt}]}],
-            inferenceConfig={"temperature": 0.0, "maxTokens": 300},
+            inferenceConfig={"temperature": 0.0, "maxTokens": 400},
         )
         reply = "\n".join(b["text"] for b in response["output"]["message"]["content"] if "text" in b)
     except Exception:
         logger.exception("Could not rewrite the question; searching it as written")
-        return False, [current]
-    lines = [_BULLET.sub("", line).strip().strip('"') for line in reply.splitlines()]
+        return SearchPlan(False, [current], None)
+    lines = [line for line in (_BULLET.sub("", line).strip().strip('"') for line in reply.splitlines()) if line]
     is_follow_up = any(_FOLLOW_UP.match(line) for line in lines)
-    rewrites = [line for line in lines if line and not _LABEL.match(line)][:1 + MAX_PHRASES]
-    return is_follow_up, list(dict.fromkeys([current, *rewrites]))
+    # The web query is the line after WEB; a reply without the WEB/KB line is not searched on the web
+    source = next((i for i, line in enumerate(lines) if _SOURCE.match(line)), None)
+    web_query = None
+    if source is not None and lines[source].upper().startswith("WEB") and source + 1 < len(lines):
+        web_query = lines[source + 1][:200] if lines[source + 1].lower() != "none" else None
+    rewrites = [line for line in lines[:source] if not _LABEL.match(line)][:1 + MAX_PHRASES]
+    return SearchPlan(is_follow_up, list(dict.fromkeys([current, *rewrites])), web_query)

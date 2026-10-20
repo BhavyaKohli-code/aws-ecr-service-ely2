@@ -151,8 +151,11 @@ def format_passages(results: list[dict]) -> str:
     """Render search results as numbered passages for the model's context."""
     blocks = []
     for i, r in enumerate(results, start=1):
+        text = " ".join(((r.get("content") or {}).get("text") or "").split())
+        if r.get("knowledge_base") == "web":  # a web page found for the question (see web/browse.py)
+            blocks.append(f"[{i}] Web page: {r.get('title')} | {r['location']['webLocation']['url']}\n{text}")
+            continue
         uri = ((r.get("location") or {}).get("s3Location") or {}).get("uri") or ""
         document = uri.rsplit("/", 1)[-1] or "unknown document"
-        text = " ".join(((r.get("content") or {}).get("text") or "").split())
         blocks.append(f"[{i}] Knowledge base: {r.get('knowledge_base')} | Document: {document}\n{text}")
     return "\n\n".join(blocks)

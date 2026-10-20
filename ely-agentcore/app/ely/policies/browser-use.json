@@ -1,0 +1,16 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "WebSearchInTheElyBrowser",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock-agentcore:StartBrowserSession",
+        "bedrock-agentcore:StopBrowserSession",
+        "bedrock-agentcore:GetBrowserSession",
+        "bedrock-agentcore:ConnectBrowserAutomationStream"
+      ],
+      "Resource": "arn:aws:bedrock-agentcore:ap-south-1:789270642392:browser-custom/ely_browser-bTkAzWj2JM"
+    }
+  ]
+}
