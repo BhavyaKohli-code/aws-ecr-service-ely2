@@ -18,7 +18,7 @@ from model.reply import ASK_AREA_MARKER, MARKERS, NOT_AVAILABLE_MARKER, ReplyFil
 from sources.presign import MAX_SOURCES, presign_sources, select_sources
 from web.browse import as_passages, web_search, web_sources
 from bi.warehouse import (BI_ERROR_ANSWER, BI_KNOWLEDGE_BASE, NO_BI_ACCESS_ANSWER, figures_prompt, is_resolved,
-                          query_warehouse, standalone_question, warehouse_tool)
+                          plan_question, query_warehouse, wants_chart, warehouse_tool)
 
 app = BedrockAgentCoreApp()
 log = app.logger
@@ -472,21 +472,26 @@ async def _answer_bi(agent, search, prompt):
         yield _final(refusal, [], "blocked")
         return
 
-    # A definition is answered from the KPI catalogue; anything else asks the figures as a standalone question
-    question = await asyncio.to_thread(standalone_question, earlier, current)
-    try:
-        payload = {}
-        if question is not None:
-            yield {"type": "status", "text": "Checking the figures…"}
+    # A definition is answered from the KPI catalogue and "chart this" from the figures already given; anything else
+    # asks the figures as a standalone question
+    kind, question = await asyncio.to_thread(plan_question, earlier, current)
+    payload = None
+    if kind == "figures":
+        yield {"type": "status", "text": "Checking the figures…"}
+        try:
             payload = await query_warehouse(search.client, tool, question)
-    except Exception:
-        log.exception("Figures lookup failed")
-        yield {"event": {"contentBlockDelta": {"delta": {"text": BI_ERROR_ANSWER}}}}
-        yield _final(BI_ERROR_ANSWER, [], "not_available")
-        return
+        except Exception:
+            log.exception("Figures lookup failed")
+            yield {"event": {"contentBlockDelta": {"delta": {"text": BI_ERROR_ANSWER}}}}
+            yield _final(BI_ERROR_ANSWER, [], "not_available")
+            return
 
-    # A finished answer or a "which office?" question is shown as the figures engine wrote it
-    direct = payload.get("clarification") or (payload["answer"] if is_resolved(payload) else "")
+    # A "which office?" question, or a finished answer when no chart was asked for, is shown as the figures engine
+    # wrote it; a chart is always drawn by the model
+    direct = ""
+    if payload:
+        direct = payload.get("clarification") or (
+            payload["answer"] if is_resolved(payload) and not wants_chart(current) else "")
     if direct:
         _save_turn(agent, current, direct)
         _remember_answer(agent, "answered", [])
