@@ -17,6 +17,8 @@ from model.guardrail import blocked_answer
 from model.reply import ASK_AREA_MARKER, MARKERS, NOT_AVAILABLE_MARKER, ReplyFilter
 from sources.presign import MAX_SOURCES, presign_sources, select_sources
 from web.browse import as_passages, web_search, web_sources
+from bi.warehouse import (BI_ERROR_ANSWER, BI_KNOWLEDGE_BASE, NO_BI_ACCESS_ANSWER, figures_prompt, is_resolved,
+                          query_warehouse, warehouse_tool)
 
 app = BedrockAgentCoreApp()
 log = app.logger
@@ -441,6 +443,71 @@ def _second_look(messages: list, system_prompt: str) -> str:
         return ""
 
 
+def _save_turn(agent, question: str, answer: str) -> None:
+    """Keep a turn answered without the model, in the agent and in memory, as if the model had answered it."""
+    session_manager = getattr(agent, "_session_manager", None)
+    for message in ({"role": "user", "content": [{"text": question}]},
+                    {"role": "assistant", "content": [{"text": answer}]}):
+        agent.messages.append(message)
+        if session_manager:
+            try:
+                session_manager.append_message(message, agent)
+            except Exception:
+                log.exception("Could not save the turn to memory")
+
+
+async def _answer_bi(agent, search, prompt):
+    """A Conversational BI turn (see bi/warehouse.py): the figures first, then the model only when they aren't a
+    finished answer or a clarifying question."""
+    tool = warehouse_tool(search.other_tool_names)
+    if not tool:
+        yield _final(NO_BI_ACCESS_ANSWER, [], "no_access")
+        return
+    current, _ = _question_and_previous(agent.messages, prompt)
+    earlier = [_user_text(m) for m in agent.messages if m.get("role") == "user" and _user_text(m)]
+    refusal = await asyncio.to_thread(blocked_answer, current)
+    if refusal:
+        _remember_answer(agent, "not_available", [])
+        yield {"event": {"contentBlockDelta": {"delta": {"text": refusal}}}}
+        yield _final(refusal, [], "blocked")
+        return
+
+    yield {"type": "status", "text": "Checking the figures…"}
+    try:
+        payload = await query_warehouse(search.client, tool, current, earlier)
+    except Exception:
+        log.exception("Figures lookup failed")
+        yield {"event": {"contentBlockDelta": {"delta": {"text": BI_ERROR_ANSWER}}}}
+        yield _final(BI_ERROR_ANSWER, [], "not_available")
+        return
+
+    # A finished answer or a "which office?" question is shown as the figures engine wrote it
+    direct = payload.get("clarification") or (payload["answer"] if is_resolved(payload) else "")
+    if direct:
+        _save_turn(agent, current, direct)
+        _remember_answer(agent, "answered", [])
+        yield {"event": {"contentBlockDelta": {"delta": {"text": direct}}}}
+        yield _final(direct, [], "answered")
+        return
+
+    agent.system_prompt = figures_prompt(payload)
+    _drop_reasoning(agent.messages)
+    answer = ""
+    async for event in agent.stream_async(prompt):
+        if not isinstance(event, dict) or "event" not in event:
+            continue
+        cbs = event["event"].get("contentBlockStart")
+        if cbs is not None and not cbs.get("start"):
+            continue
+        delta = event["event"].get("contentBlockDelta", {}).get("delta", {})
+        if "reasoningContent" in delta:
+            continue
+        answer += delta.get("text", "")
+        yield event
+    _remember_answer(agent, "answered", [])
+    yield _final(answer.strip(), [], "answered")
+
+
 def _get_authorization(context) -> str | None:
     """The caller's Cognito token, forwarded by Runtime via requestHeaderAllowlist."""
     headers = getattr(context, "request_headers", None) or {}
@@ -465,13 +532,19 @@ async def invoke(payload, context):
 
     prompt = _extract_prompt(payload)
 
+    # The Conversational BI chat answers from the sales figures, not the knowledge bases
+    requested = _requested_knowledge_bases(payload)
+    if requested == [BI_KNOWLEDGE_BASE]:
+        async for event in _answer_bi(agent, search, prompt):
+            yield event
+        return
+
     # Retrieve first, in code, from every knowledge base this user may use
     if not search.knowledge_bases:
         yield _final(NO_ACCESS_ANSWER, [], "no_access")
         return
 
     # A specialist chat searches only its own knowledge base(s), and only those the user may use
-    requested = _requested_knowledge_bases(payload)
     knowledge_bases = search.knowledge_bases
     if requested is not None:
         knowledge_bases = [k for k in search.knowledge_bases if k in requested]

@@ -1,0 +1,8 @@
+{
+  "help": "One card per document. Put the file in S3 and add another JSON file here. The assistant searches these cards and opens a full document only when a card matches. Do not paste the document body into this file.",
+  "id": "agency_kpi_catalogue",
+  "title": "Agency sales KPI catalogue",
+  "topics": ["paid wfyp", "paid nop", "persistency", "mdrt", "promotion", "active agent", "definition", "office total"],
+  "summary": "Defines paid WFYP, paid NOP, persistency, MDRT, promotion, and active-agent measures. An office total is the office head's own rolled-up figure. Producers are the people who report to that office head.",
+  "s3_key": "docs/agency_kpi_catalogue.txt"
+}

@@ -1,0 +1,30 @@
+,agent_id,agent_name,master_flag,master_role,master_dsg,agent_branch,agt_desg_desc,aap_1,aap_2,aap_3,adm,ap,partner,oh,rm,zh,ch,supervisor_id,supervisor_name,supervisor_role,agent_status,arm_id,super_zvp_id,super_zvp_name,relationship_to_office_head
+0,684632,Manoranjan Nath,OH,OH,MPR,ARKL1,Managing Partner,,,,,,,684632,249554,399091,490377,249554,Shambhunath Pal,RM,Active,NA,399091,Yogesh Laroiya,SELF
+1,35151G,Arun kumar Patro,AAP,Agent,AA,ARKL1,Agency Associate,,,,,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+2,40115F,BIRSA EKKA,AAP,Agent,AA,ARKL1,Agency Associate,,,,,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+3,11740U,Bhabesh Kumar Mahato,ADM,ADM,ADM,ARKL1,Agency Development Manager,,,,11740U,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+4,834515,CHILLIPA PARIHARI,Advisor,Agent,AGT,ARKL1,Agent,,,,,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+5,457253,Firoz Shah,ADM,ADM,APA,ARKL1,Sr.Associate Partner-Agency Sales,,,,457253,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+6,25389C,Gitarani Nath,ADM,ADM,APA,ARKL1,Sr.Associate Partner-Agency Sales,,,,25389C,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+7,54007E,Hemanta Behera,ADM,ADM,SAD,ARKL1,Sr. Agency Development Manager,,,,54007E,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+8,83372A,JAYASHREE MOHANTY,Advisor,Agent,AAA,ARKL1,Assistant Agency Associate,,,,,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+9,574877,Jyoti Prakash Dash,ADM,ADM,PSA,ARKL1,Partner-Agency Sales,,,,574877,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+10,30650G,Jyoti Saha,ADM,ADM,AAM,ARKL1,Associate Agency Development Manager,,,,30650G,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+11,709004,Kartika Chandra Behera,Advisor,Agent,AGT,ARKL1,Agent,,,,,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+12,984326,MANIKYAM BULUSU,Advisor,Agent,AGT,ARKL1,Agent,,,,,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+13,50541G,MOHIT KUMAR PRASAD,ADM,ADM,AAM,ARKL1,Associate Agency Development Manager,,,,50541G,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+14,80118A,MRUTYUNJAYA BISWAL,ADM,ADM,SAD,ARKL1,Sr. Agency Development Manager,,,,80118A,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+15,942709,PUNIA KISHAN,Advisor,Agent,AGT,ARKL1,Agent,,,,,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+16,31084G,PUSPANJALI POTHAL,ADM,ADM,AAM,ARKL1,Associate Agency Development Manager,,,,31084G,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+17,25011C,Pallishree Adhikari,ADM,ADM,AAM,ARKL1,Associate Agency Development Manager,,,,25011C,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+18,12805G,Pranati Sahoo,ADM,ADM,AAM,ARKL1,Associate Agency Development Manager,,,,12805G,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+19,713254,Pratap Chandra Mohanty,Advisor,Agent,AGT,ARKL1,Agent,,,,,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+20,36814D,SAJAN ASSOCIATES,AAP,Leader_EBA_FBA,EBA,ARKL1,Financial Business Associate,,,,,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+21,40224F,SANAT KUMAR PRADHAN,Advisor,Agent,PIM,ARKL1,Elite Insurance Manager,,,,,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+22,79752F,SANDHYASHREE NAYAK,Advisor,Agent,AGT,ARKL1,Agent,,,,,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+23,784838,SATYABHAMA PANI,AAP,Agent,AA,ARKL1,Agency Associate,,,,,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+24,21584F,SONALI ROUT,AAP,Agent,AA,ARKL1,Agency Associate,,,,,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+25,77250C,Soudamini Routray,ADM,ADM,ADM,ARKL1,Agency Development Manager,,,,77250C,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+26,40231H,Subham Das,ADM,ADM,AAM,ARKL1,Associate Agency Development Manager,,,,40231H,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+27,81931G,TANUJA PRUSTY,ADM,ADM,AAM,ARKL1,Associate Agency Development Manager,,,,81931G,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT
+28,453007,Udaya kumar Sahoo,ADM,ADM,PSA,ARKL1,Partner-Agency Sales,,,,453007,,,684632,249554,399091,490377,684632,Manoranjan Nath,OH,Active,NA,399091,Yogesh Laroiya,DIRECT_REPORT

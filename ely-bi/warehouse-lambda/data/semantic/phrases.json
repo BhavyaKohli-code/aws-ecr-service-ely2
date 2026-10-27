@@ -1,0 +1,23 @@
+{
+  "help": "Business phrases that are not column names. Add a phrase here when people say something the tables do not store as text. direct agency is a population, not an office name.",
+  "bindings": [
+    {
+      "id": "direct_agency",
+      "phrases": ["direct agency", "direct agencies"],
+      "population": "direct_reports",
+      "note": "Direct producers in the agency channel. This is not the name of an office."
+    },
+    {
+      "id": "producers",
+      "phrases": ["producer", "producers"],
+      "population": "direct_reports",
+      "note": "People who produce in the office. The office head roll-up is separate."
+    },
+    {
+      "id": "that_office",
+      "phrases": ["that office", "the office", "this office", "my office"],
+      "bind": "office",
+      "note": "The office already in the conversation, or the only office in the figures."
+    }
+  ]
+}

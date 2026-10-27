@@ -111,6 +111,13 @@
           "statement": "permit(\n  principal is AgentCore::OAuthUser,\n  action == AgentCore::Action::\"video-knowledge-retrieval___retrieve_videos\",\n  resource == AgentCore::Gateway::\"arn:aws:bedrock-agentcore:ap-south-1:789270642392:gateway/gateway-quick-start-5911f1-51wfgctwi8\"\n)\nwhen {\n  principal.hasTag(\"cognito:groups\") &&\n  (principal.getTag(\"cognito:groups\") like \"*FULL_TIME*\" ||\n   principal.getTag(\"cognito:groups\") like \"*BUSINESS_PARTNER*\")\n};",
           "validationMode": "FAIL_ON_ANY_FINDINGS",
           "enforcementMode": "ACTIVE"
+        },
+        {
+          "name": "ely_bi_fulltime_no_channel",
+          "description": "Conversational BI figures (Redshift ely-bi): FULL_TIME group with no sales channel group only",
+          "statement": "permit(\n  principal is AgentCore::OAuthUser,\n  action == AgentCore::Action::\"bi-warehouse___query_warehouse\",\n  resource == AgentCore::Gateway::\"arn:aws:bedrock-agentcore:ap-south-1:789270642392:gateway/gateway-quick-start-5911f1-51wfgctwi8\"\n)\nwhen {\n  principal.hasTag(\"cognito:groups\") &&\n  principal.getTag(\"cognito:groups\") like \"*FULL_TIME*\" &&\n  !(principal.getTag(\"cognito:groups\") like \"*CHANNEL_*\")\n};",
+          "validationMode": "FAIL_ON_ANY_FINDINGS",
+          "enforcementMode": "ACTIVE"
         }
       ]
     }

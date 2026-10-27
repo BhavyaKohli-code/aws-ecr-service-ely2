@@ -1,0 +1,121 @@
+{
+  "help": "Copy this file to describe another table. The assistant retrieves only the files that match the question, so a new table stays out of the prompt until a question needs it. Add a metric by listing the words a person would say and the column that holds the number. Add a population by listing words and the filters that select those rows.",
+  "table": "agency.agent_kpi",
+  "summary": "One row is one person for one month, one time grain, and one view. The person's own name is agent_name. The office total is the office head row, not the sum of the people under them.",
+  "defaults": [
+    {"column": "agent_status", "equals": "Active"}
+  ],
+  "time": {
+    "month_column": "month_id",
+    "grain_column": "time_dim",
+    "default_grain": "MTD",
+    "grains": [
+      {"phrases": ["this month", "month to date", "current month"], "value": "MTD"},
+      {"phrases": ["this quarter", "for the quarter", "quarter"], "value": "QTD"},
+      {"phrases": ["year to date", "this year", "ytd"], "value": "YTD"},
+      {"phrases": ["today", "for the day"], "value": "FTD"}
+    ]
+  },
+  "office": {
+    "head_name_column": "agent_name",
+    "member_name_column": "supervisor_name",
+    "head_filters": [
+      {"column": "relationship_to_office_head", "equals": "SELF"}
+    ]
+  },
+  "metrics": [
+    {"id": "paid_wfyp", "phrases": ["paid wfyp", "wfyp"], "column": "kpi104_paid_wfyp", "scale": "number", "label": "paid WFYP", "also_show": ["paid_nop"]},
+    {"id": "paid_nop", "phrases": ["paid nop", "nop"], "column": "kpi94_paid_nop", "scale": "number", "label": "paid NOP"},
+    {"id": "paid_fyc", "phrases": ["paid fyc", "fyc"], "column": "kpi96_paid_fyc", "scale": "number", "label": "Paid FYC"},
+    {"id": "case_size", "phrases": ["case size"], "column": "kpi236_case_size", "scale": "number", "label": "case size"},
+    {"id": "wfyp_achievement", "phrases": ["wfyp achievement", "paid wfyp achievement"], "column": "kpi116_paid_wfyp_perc_std_ach", "scale": "percent", "label": "Paid WFYP achievement"},
+    {"id": "persistency_13", "phrases": ["13th-month persistency", "13th month persistency"], "column": "kpi186_13th_persistency", "scale": "ratio", "label": "13th-month persistency"},
+    {"id": "persistency_25", "phrases": ["25th-month persistency", "25th month persistency"], "column": "kpi189_25th_persistency", "scale": "ratio", "label": "25th-month persistency"},
+    {
+      "id": "active_agent_rate",
+      "phrases": ["active-agent rate", "active agent rate"],
+      "column": "kpi42_mtd_active_perc_agt",
+      "scale": "ratio",
+      "label": "active-agent rate",
+      "companions": [
+        {
+          "id": "active_agent_count",
+          "phrases": ["active agent count"],
+          "column": "kpi41_mtd_active_count",
+          "scale": "number",
+          "label": "active agents"
+        }
+      ]
+    },
+    {"id": "promotion_qualification", "phrases": ["promotion qualification"], "column": "kpi379_promotion_qr_perc_ach", "scale": "percent", "label": "Promotion qualification"},
+    {"id": "promotion_wfyp_achievement", "phrases": ["promotion paid wfyp achievement"], "column": "kpi383_promotion_paid_wfyp_perc_ach", "scale": "percent", "label": "Promotion paid WFYP achievement"}
+  ],
+  "populations": [
+    {
+      "id": "direct_reports",
+      "phrases": ["producer", "producers", "direct report", "direct reports", "direct agency"],
+      "filters": [
+        {"column": "relationship_to_office_head", "equals": "DIRECT_REPORT"}
+      ]
+    },
+    {
+      "id": "office_total",
+      "phrases": ["office total", "office's total"],
+      "filters": [
+        {"column": "relationship_to_office_head", "equals": "SELF"}
+      ]
+    },
+    {
+      "id": "leaders",
+      "phrases": ["leader", "leaders"],
+      "filters": [
+        {"column": "master_flag", "equals": "ADM"}
+      ]
+    },
+    {
+      "id": "associates",
+      "phrases": ["agency associate", "agency associates", "associate"],
+      "filters": [
+        {"column": "master_flag", "equals": "AAP"}
+      ]
+    }
+  ],
+  "designation_column": "agt_desg_desc",
+  "groups": [
+    {
+      "id": "promotion_track",
+      "label": "promotion track",
+      "column": "promotion_type",
+      "lookup": "promotion_types",
+      "count_label": "leaders",
+      "phrases": ["promotion track", "promotion"]
+    }
+  ],
+  "channels": [
+    {
+      "phrases": ["direct agency", "agency channel", "core agency"],
+      "column": "channel_name",
+      "equals": "AGENCY"
+    }
+  ],
+  "dimensions": [
+    {"name": "agent_name", "means": "the person the figure belongs to"},
+    {"name": "supervisor_name", "means": "who that person reports to"},
+    {"name": "agt_desg_desc", "means": "designation"},
+    {"name": "agent_branch", "means": "branch"},
+    {"name": "channel_name", "means": "channel"},
+    {"name": "sub_channel_name", "means": "sub-channel"},
+    {"name": "relationship_to_office_head", "means": "SELF is the office head roll-up; DIRECT_REPORT is a person in the office"},
+    {"name": "master_flag", "means": "OH office head, ADM leader, AAP associate"},
+    {"name": "promotion_type", "means": "promotion track such as Regular or FastTrack"},
+    {"name": "month_id", "means": "month as YYYYMM"},
+    {"name": "time_dim", "means": "FTD day, MTD month to date, QTD quarter, YTD year to date"}
+  ],
+  "lookups": {
+    "offices": "SELECT DISTINCT agent_name FROM agency.agent_kpi WHERE relationship_to_office_head = 'SELF' AND time_dim = 'MTD' AND agent_status = 'Active' AND month_id = (SELECT MAX(month_id) FROM agency.agent_kpi)",
+    "latest_month": "SELECT MAX(month_id) FROM agency.agent_kpi",
+    "people": "SELECT DISTINCT agent_name FROM agency.agent_kpi WHERE agent_status = 'Active' AND agent_name IS NOT NULL",
+    "designations": "SELECT DISTINCT agt_desg_desc FROM agency.agent_kpi WHERE agt_desg_desc IS NOT NULL",
+    "promotion_types": "SELECT DISTINCT promotion_type FROM agency.agent_kpi WHERE promotion_type IS NOT NULL"
+  }
+}

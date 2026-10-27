@@ -1,0 +1,27 @@
+{
+  "help": "Hierarchy roll-up. One row per person. Use this for who someone reports to, the office head, the RM, and the ZVP. Add another file beside this one for the next table.",
+  "table": "agency.agent_hierarchy",
+  "summary": "One row per person with the office head, regional manager, and ZVP above them, plus designation.",
+  "defaults": [
+    {"column": "agent_status", "equals": "Active"}
+  ],
+  "dimensions": [
+    {"name": "agent_name", "means": "the person"},
+    {"name": "supervisor_name", "means": "who they report to"},
+    {"name": "supervisor_role", "means": "role of that supervisor"},
+    {"name": "super_zvp_name", "means": "ZVP above the person"},
+    {"name": "agt_desg_desc", "means": "designation"},
+    {"name": "agent_branch", "means": "branch"},
+    {"name": "relationship_to_office_head", "means": "SELF for the office head, DIRECT_REPORT for a person in the office"},
+    {"name": "agent_status", "means": "Active or inactive"}
+  ],
+  "metrics": [],
+  "populations": [],
+  "roles": [
+    {"id": "rm", "phrases": ["rm", "regional manager"], "name_column": "supervisor_name", "label": "RM"},
+    {"id": "zvp", "phrases": ["zvp"], "name_column": "super_zvp_name", "label": "ZVP"}
+  ],
+  "lookups": {
+    "people": "SELECT DISTINCT agent_name FROM agency.agent_hierarchy WHERE agent_status = 'Active' AND agent_name IS NOT NULL"
+  }
+}

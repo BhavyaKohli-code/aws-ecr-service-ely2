@@ -70,11 +70,18 @@ class KnowledgeSearch:
 
     def __init__(self, mcp_client: MCPClient):
         self._client = mcp_client
+        tools = mcp_client.list_tools_sync()
         self.tool_names = [
-            t.mcp_tool.name for t in mcp_client.list_tools_sync()
+            t.mcp_tool.name for t in tools
             if "query" in (t.mcp_tool.inputSchema or {}).get("properties", {})
         ]
-        logger.info("Knowledge search covers: %s", self.tool_names)
+        # The other tools this user may call (the Conversational BI figures, see bi/warehouse.py); never searched
+        self.other_tool_names = [t.mcp_tool.name for t in tools if t.mcp_tool.name not in self.tool_names]
+        logger.info("Knowledge search covers: %s (other tools: %s)", self.tool_names, self.other_tool_names)
+
+    @property
+    def client(self) -> MCPClient:
+        return self._client
 
     @property
     def knowledge_bases(self) -> list[str]:

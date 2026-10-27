@@ -1,0 +1,70 @@
+Agency Sales KPI Catalogue — Bedrock Data POC
+October 2026
+
+How to read this catalogue
+This catalogue defines agency-channel sales and force-management KPIs used in the POC.
+Facts live in Redshift schema `agency`:
+- `agency.agent_kpi` — one row per agent, month, time grain (FTD/MTD/QTD/YTD), and master flag (AAP/ADM).
+- `agency.agent_hierarchy` — one row per agent with roll-up IDs (OH, RM, ZH, CH) and designation metadata.
+
+Data notes that apply throughout:
+- Reference month = `month_id` in the sample (202610 = October 2026). Prefer MTD or YTD rows unless the user asks for FTD/QTD.
+- `time_dim`: FTD (for the day), MTD (month to date), QTD (quarter to date), YTD (year to date).
+- `master_flag`: AAP = agency associate producer view; ADM = agency development manager / leader view.
+- `agent_branch` (e.g. ARKL1) and `channel_name` / `sub_channel_name` segment the force (AGENCY / CORE_AGENCY in the sample).
+- Office head in the sample is supervisor_id 684632 (Manoranjan Nath, role OH). Many direct reports roll up to this OH.
+- Persistency metrics are ratios (num ÷ den) when the rate column is null; prefer `kpi186`, `kpi189`, `kpi239` when populated.
+- Achievement % fields (suffix `_perc_ach` or `_perc_std_ach`) are already expressed as percentages in the warehouse (e.g. 50.0 = 50%).
+
+Production & paid business (KPIs 1–8)
+1. Paid NOP (Number of policies) — `kpi94_paid_nop`. Count of paid new business cases in the period for the agent at the chosen time grain.
+2. Paid adjusted MFYP — `kpi95_paid_adj_mfyp`. Modified first-year premium (adjusted) for paid cases.
+3. Paid FYC — `kpi96_paid_fyc`. First-year commission on paid business.
+4. Paid WFYP — `kpi104_paid_wfyp`. Weighted first-year premium for paid business; primary production value metric.
+5. Paid NOP target — `tgt_paid_nop`. Target case count for the period.
+6. Paid WFYP target — `tgt_paid_wfyp`. Target WFYP for the period.
+7. YTD paid NOP — `kpi190_ytd_paid_nop`. Year-to-date paid case count (often populated on YTD rows).
+8. Case size — `kpi236_case_size`. Average premium per case (WFYP ÷ NOP semantics at the agent grain).
+
+WFYP & NOP achievement (KPIs 9–12)
+9. WFYP standard — `kpi114_paid_wfyp_std`. Standard / quota WFYP for achievement tracking.
+10. WFYP actual — `kpi115_paid_wfyp_act`. Actual WFYP against standard (may mirror kpi104 on MTD rows).
+11. WFYP % standard achievement — `kpi116_paid_wfyp_perc_std_ach`. Actual ÷ standard × 100.
+12. NOP % achievement — `kpi124_paid_nop_perc_ach`. Paid NOP actual vs standard (`kpi123_paid_nop_act` vs `kpi122_paid_nop_std`).
+
+Active force (KPIs 13–16)
+13. MTD active agent count — `kpi41_mtd_active_count`. Count of active agents in the leader’s hierarchy for the month.
+14. MTD active agent % — `kpi42_mtd_active_perc_agt`. Share of the team that is active month-to-date.
+15. YTD active agent count — `kpi45_ytd_active_count`.
+16. YTD active agent % — `kpi46_ytd_active_perc_agt`.
+
+Persistency (KPIs 17–22)
+17. 13th month persistency — `kpi186_13th_persistency` (or num/den: `kpi184` / `kpi185`).
+18. 25th month persistency — `kpi189_25th_persistency` (or num/den: `kpi187` / `kpi188`).
+19. Combined 13th + 25th persistency — `kpi239_13th_plus_25th_persistency` (or num/den: `kpi237` / `kpi238`).
+20. Persistency shortfall (promotion) — `kpi392_promotion_persistency_shortfall`. Gap vs promotion persistency standard.
+
+MDRT & qualifiers (KPIs 23–26)
+21. MDRT qualifier flag — `kpi257_mdrt_qualifier`. Indicator whether the agent qualifies for MDRT (1 = yes in sample).
+22. MDRT standard — `kpi282_mdrt_std`. MDRT production standard.
+23. MDRT actual — `kpi283_mdrt_act`. Actual production credited toward MDRT.
+24. MDRT % achievement — `kpi284_mdrt_perc_ach`. Actual vs MDRT standard.
+
+Promotion tracking (KPIs 27–34)
+25. Promotion type — `promotion_type` (e.g. Regular, FastTrack) and workflow `status`.
+26. Promotion QR standard / actual / % / shortfall — `kpi377`–`kpi380`.
+27. Promotion paid WFYP standard / actual / % / shortfall — `kpi381`–`kpi384`.
+28. Promotion persistency standard / actual / % / shortfall — `kpi389`–`kpi392`.
+
+Hierarchy & dimensions (for joins and filters)
+29. Agent identity — `agent_id`, `agent_name`, `agt_desg_desc`, `agent_status`.
+30. Supervisor roll-up — `supervisor_id`, `supervisor_name`, `supervisor_role`, `relationship_to_office_head`.
+31. Leadership chain — from `agent_hierarchy`: `oh`, `rm`, `zh`, `ch`, `super_zvp_id`, `super_zvp_name`.
+32. Designation roll-up flags — `master_flag`, `master_role`, `master_dsg` on hierarchy; use `master_flag` on KPI rows to pick AAP vs ADM metrics.
+
+Query conventions for the SQL assistant
+- Filter `agent_status = 'Active'` unless the user asks for inactive agents.
+- For “this month” production, use `month_id = 202610` and `time_dim = 'MTD'` unless specified otherwise.
+- For leader team totals under an OH, filter `supervisor_id = 684632` or join hierarchy on `oh = 684632`.
+- Rank agents by `kpi104_paid_wfyp` or `kpi94_paid_nop` at the requested time grain.
+- When comparing AAP vs ADM views, always filter `master_flag` explicitly — the same agent_id can appear under both flags.
