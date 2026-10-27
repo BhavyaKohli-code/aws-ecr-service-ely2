@@ -18,7 +18,7 @@ from model.reply import ASK_AREA_MARKER, MARKERS, NOT_AVAILABLE_MARKER, ReplyFil
 from sources.presign import MAX_SOURCES, presign_sources, select_sources
 from web.browse import as_passages, web_search, web_sources
 from bi.warehouse import (BI_ERROR_ANSWER, BI_KNOWLEDGE_BASE, NO_BI_ACCESS_ANSWER, figures_prompt, is_resolved,
-                          query_warehouse, warehouse_tool)
+                          query_warehouse, standalone_question, warehouse_tool)
 
 app = BedrockAgentCoreApp()
 log = app.logger
@@ -472,9 +472,13 @@ async def _answer_bi(agent, search, prompt):
         yield _final(refusal, [], "blocked")
         return
 
-    yield {"type": "status", "text": "Checking the figures…"}
+    # A definition is answered from the KPI catalogue; anything else asks the figures as a standalone question
+    question = await asyncio.to_thread(standalone_question, earlier, current)
     try:
-        payload = await query_warehouse(search.client, tool, current, earlier)
+        payload = {}
+        if question is not None:
+            yield {"type": "status", "text": "Checking the figures…"}
+            payload = await query_warehouse(search.client, tool, question)
     except Exception:
         log.exception("Figures lookup failed")
         yield {"event": {"contentBlockDelta": {"delta": {"text": BI_ERROR_ANSWER}}}}

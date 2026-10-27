@@ -9,14 +9,36 @@ full-time users outside the sales channels, so a chat without it has no access.
 
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
+
+import boto3
 
 logger = logging.getLogger(__name__)
 
 BI_KNOWLEDGE_BASE = "bi-warehouse"
-# Earlier questions sent with each one, so a fragment ("for direct agency", "and YTD?") keeps its subject
+# Earlier questions the standalone rewrite sees
 PRIOR_QUESTIONS = 3
+REWRITE_MODEL_ID = os.getenv("COMPARE_MODEL_ID", "in.anthropic.claude-haiku-4-5-20251001-v1:0")
+
+# The figures engine reads earlier questions together with the new one, so given them it answered "What is MDRT?"
+# and "same for 25th month" with the previous question's figures. It gets one standalone question instead.
+STANDALONE_PROMPT = """You prepare the latest question in a chat about agency sales figures for the figures lookup.
+
+Previous questions, oldest first:
+{previous}
+Latest question: {current}
+
+Reply with exactly one line:
+- DEFINITION if the latest question only asks what a measure, term or rule means or how it is calculated, and
+  wants no figure.
+- Otherwise the latest question as one standalone question. If it names its own measure or subject, repeat it
+  unchanged. If it is a fragment ("and for direct agency?", "same for 25th month", "only the top 3", "and YTD?"),
+  rewrite the most recent previous question with only that change applied. Keep the person's own words and terms
+  (WFYP, NOP, MDRT, leaders, month to date); don't explain, expand or translate them."""
+
+_bedrock = None
 
 KPI_CATALOGUE = (Path(__file__).parent / "agency_kpi_catalogue.txt").read_text(encoding="utf-8")
 
@@ -68,10 +90,33 @@ def _payload(outcome: dict) -> dict:
     return {}
 
 
-async def query_warehouse(mcp_client, tool_name: str, question: str, prior: list[str]) -> dict:
+def standalone_question(previous: list[str], current: str) -> str | None:
+    """The question to ask the figures, standing on its own; None for a definition (answered from the KPI
+    catalogue). The question as asked if the model can't be reached, or for the first question."""
+    global _bedrock
+    if not previous:
+        return current
+    try:
+        if _bedrock is None:
+            _bedrock = boto3.client("bedrock-runtime")
+        prompt = STANDALONE_PROMPT.format(previous="\n".join(previous[-PRIOR_QUESTIONS:]), current=current)
+        response = _bedrock.converse(modelId=REWRITE_MODEL_ID,
+                                     messages=[{"role": "user", "content": [{"text": prompt}]}],
+                                     inferenceConfig={"temperature": 0.0, "maxTokens": 200})
+        reply = "".join(b["text"] for b in response["output"]["message"]["content"] if "text" in b)
+    except Exception:
+        logger.exception("Could not rewrite the BI question; asking it as written")
+        return current
+    line = next((l.strip().strip('"') for l in reply.splitlines() if l.strip()), "")
+    if line.upper().startswith("DEFINITION"):
+        return None
+    logger.info("BI question %r asked as %r", current, line or current)
+    return line or current
+
+
+async def query_warehouse(mcp_client, tool_name: str, question: str) -> dict:
     """Ask the figures; raises when the tool call fails."""
-    outcome = await mcp_client.call_tool_async(f"bi-{uuid.uuid4().hex[:12]}", tool_name,
-                                               {"question": question, "prior": prior[-PRIOR_QUESTIONS:]})
+    outcome = await mcp_client.call_tool_async(f"bi-{uuid.uuid4().hex[:12]}", tool_name, {"question": question})
     if outcome.get("status") == "error":
         raise RuntimeError(f"Warehouse tool failed: {outcome.get('content')}")
     payload = _payload(outcome)
@@ -87,6 +132,8 @@ def is_resolved(payload: dict) -> bool:
 
 def figures_prompt(payload: dict) -> str:
     """BI system prompt for this turn, with the figures the tool returned (or none) and the KPI catalogue."""
+    if not payload:  # a definition: the figures weren't asked
+        return f"{BI_SYSTEM_PROMPT}\nFigures for this question: none needed.\n\nKPI catalogue:\n\n{KPI_CATALOGUE}"
     figures = (payload.get("answer") or "").strip() or "No matching figures."
     guidance = (payload.get("guidance") or "").strip()
     note = f"\n{guidance}\n" if guidance else ""
