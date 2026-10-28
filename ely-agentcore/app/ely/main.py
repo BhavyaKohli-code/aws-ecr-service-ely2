@@ -18,7 +18,7 @@ from model.reply import ASK_AREA_MARKER, MARKERS, NOT_AVAILABLE_MARKER, ReplyFil
 from sources.presign import MAX_SOURCES, presign_sources, select_sources
 from web.browse import as_passages, web_search, web_sources
 from bi.warehouse import (BI_ERROR_ANSWER, BI_KNOWLEDGE_BASE, NO_BI_ACCESS_ANSWER, figures_prompt, is_resolved,
-                          plan_question, query_warehouse, wants_chart, warehouse_tool)
+                          plan_question, query_warehouse, wants_chart, wants_figures, warehouse_tool)
 
 app = BedrockAgentCoreApp()
 log = app.logger
@@ -547,6 +547,14 @@ async def invoke(payload, context):
         async for event in _answer_bi(agent, search, prompt):
             yield event
         return
+    # In Ely's own chat, a user who may use the figures gets them for a figures question ("top agents by WFYP")
+    if requested is None and warehouse_tool(search.other_tool_names):
+        current, _ = _question_and_previous(agent.messages, prompt)
+        earlier = [_user_text(m) for m in agent.messages if m.get("role") == "user" and _user_text(m)]
+        if current and await asyncio.to_thread(wants_figures, earlier, current):
+            async for event in _answer_bi(agent, search, prompt):
+                yield event
+            return
 
     # Retrieve first, in code, from every knowledge base this user may use
     if not search.knowledge_bases:

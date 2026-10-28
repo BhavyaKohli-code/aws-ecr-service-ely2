@@ -41,6 +41,20 @@ Reply with exactly one line:
   rewrite the most recent previous question with only that change applied. Keep the person's own words and terms
   (WFYP, NOP, MDRT, leaders, month to date); don't explain, expand or translate them."""
 
+# In Ely's own chat, for a user who may use the figures: does this question want them, or the documents?
+ROUTE_PROMPT = """An insurance company's assistant can answer from documents (HR policies, products, sales process, KPI
+definitions) or from the live agency sales figures (the actual numbers for agents, leaders and offices: paid WFYP,
+NOP, FYC, case size, targets and achievement, persistency %, active agents, MDRT and promotion status, rankings,
+counts, lists, comparisons).
+
+Previous questions, oldest first:
+{previous}
+Latest question: {current}
+
+Reply FIGURES if the latest question asks for those actual numbers, people or rankings, or is a follow-up or "chart
+this" on an answer that gave them. Reply DOCS for anything else, including what a measure means or how it is
+calculated. One word."""
+
 _bedrock = None
 
 KPI_CATALOGUE = (Path(__file__).parent / "agency_kpi_catalogue.txt").read_text(encoding="utf-8")
@@ -99,6 +113,26 @@ def _payload(outcome: dict) -> dict:
         if isinstance(payload, dict):
             return payload
     return {}
+
+
+def wants_figures(previous: list[str], current: str) -> bool:
+    """True when a question in Ely's own chat should be answered from the figures; False (the documents) if the model
+    can't be reached."""
+    global _bedrock
+    try:
+        if _bedrock is None:
+            _bedrock = boto3.client("bedrock-runtime")
+        prompt = ROUTE_PROMPT.format(previous="\n".join(previous[-PRIOR_QUESTIONS:]) or "(none)", current=current)
+        response = _bedrock.converse(modelId=REWRITE_MODEL_ID,
+                                     messages=[{"role": "user", "content": [{"text": prompt}]}],
+                                     inferenceConfig={"temperature": 0.0, "maxTokens": 5})
+        reply = "".join(b["text"] for b in response["output"]["message"]["content"] if "text" in b)
+    except Exception:
+        logger.exception("Could not decide between the figures and the documents; using the documents")
+        return False
+    figures = reply.strip().upper().startswith("FIGURES")
+    logger.info("Ely question %r goes to the %s", current, "figures" if figures else "documents")
+    return figures
 
 
 def wants_chart(question: str) -> bool:
