@@ -20,7 +20,7 @@
       "envVars": [
         {
           "name": "BEDROCK_MODEL_ID",
-          "value": "in.anthropic.claude-sonnet-5"
+          "value": "in.openai.gpt-5.6-luna"
         },
         {
           "name": "COMPARE_MODEL_ID",
@@ -61,7 +61,8 @@
       "additionalPolicies": [
         "policies/documents-read.json",
         "policies/browser-use.json",
-        "policies/guardrail-use.json"
+        "policies/guardrail-use.json",
+        "policies/openai-models-use.json"
       ],
       "authorizerType": "CUSTOM_JWT",
       "authorizerConfiguration": {

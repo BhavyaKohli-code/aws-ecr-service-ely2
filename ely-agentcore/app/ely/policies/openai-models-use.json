@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AnswerWithOpenAIModelsInTheDefaultProject",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:ap-south-1:789270642392:project/default",
+        "arn:aws:bedrock:ap-south-2:789270642392:project/default"
+      ]
+    }
+  ]
+}
